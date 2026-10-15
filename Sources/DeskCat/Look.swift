@@ -142,6 +142,7 @@ struct Palette {
     let pupil: CGColor
     let mouth = RGB(1, 0.561, 0.639).cg()
     let heart = RGB(1, 0.42, 0.545).cg()
+    let star = RGB(1, 0.82, 0.25).cg()
     let shadow = RGB.black.cg()
     let inkText = RGB.ink.ns
     // box

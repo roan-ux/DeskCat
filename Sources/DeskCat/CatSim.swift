@@ -52,8 +52,9 @@ struct Skeleton {
     var shoulder: CGPoint
 }
 
-/// Two-bone IK. The joint bends backwards, like a cat's wrist and hock.
-func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat) -> CGPoint {
+/// Two-bone IK. By default the joint bends backwards, like a cat's hock (and its elbow when it
+/// reaches up with a paw). `forward` bends it the other way, like a front wrist folding mid-step.
+func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat, forward: Bool = false) -> CGPoint {
     let dx = b.x - a.x, dy = b.y - a.y
     let d = max(hypot(dx, dy), 0.001)
     if d >= l1 + l2 - 0.01 {
@@ -63,7 +64,7 @@ func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat) -> CGPoin
     let along = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
     let h = sqrt(max(0, l1 * l1 - along * along))
     let nx = -uy, ny = ux
-    let s: CGFloat = nx > 0 ? -1 : 1
+    let s: CGFloat = (nx > 0) != forward ? -1 : 1
     return CGPoint(x: a.x + ux * along + nx * h * s, y: a.y + uy * along + ny * h * s)
 }
 
@@ -72,6 +73,7 @@ func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat) -> CGPoin
 enum Act {
     case inBox, leaving, air, land, pin, sit, look, groom, yawn, stretch, loaf, sleep
     case wander, watch, approach, stalk, swat, petted, startle, goHome, held
+    case dizzy, visit, zoomies
 
     var label: String {
         switch self {
@@ -96,6 +98,9 @@ enum Act {
         case .startle: return "Startled!"
         case .goHome: return "Heading home"
         case .held: return "Picked up"
+        case .dizzy: return "Dizzy!"
+        case .visit: return "Coming to say hi"
+        case .zoomies: return "Zoomies!"
         }
     }
 }
@@ -166,6 +171,10 @@ final class CatSim {
     var ptrVX: CGFloat = 0, ptrVY: CGFloat = 0
     var ptrSpeed: CGFloat = 0
     var ptrLastMove: CGFloat = 0
+    /// How far the pointer has turned while moving fast, in radians (signed, slowly forgotten).
+    /// Several quick circles in a row make the cat dizzy.
+    var spin: CGFloat = 0
+    private var ptrHeading: CGFloat?
 
     // Body
     var pos = CGPoint.zero
@@ -185,6 +194,11 @@ final class CatSim {
     var tailBase = Spring(-1.0, f: 2.2, z: 0.6), tailCurl = Spring(0.36, f: 2, z: 0.6), tailAmp = Spring(0.1, f: 2, z: 0.8)
     var tailFreq: CGFloat = 1.6
     var tailPuff = Spring(1, f: 5, z: 0.5)
+    /// 0...1, drives the swirly eyes and the stars circling the head.
+    var dizzy = Spring(0, f: 2.5, z: 0.9)
+    /// While held, the hips and back legs lag behind the scruff like a loose pendulum (world x, sideways)
+    /// and stretch down when lifted fast. Low damping so they keep swinging after the pointer stops.
+    var dangle = Spring(0, f: 1.5, z: 0.16), stretch = Spring(0, f: 2.2, z: 0.25)
     var tailPhase: CGFloat = 0
     var tail: [CGPoint] = []
     var blinkAt: CGFloat = 0, blinkT: CGFloat = -1
@@ -202,12 +216,16 @@ final class CatSim {
     var swat: Swat?
     var hearts: [Heart] = []
     var zzz: CGFloat = 0
+    var dizzyUntil: CGFloat = -10
+    /// Every 5 to 10 minutes it comes over to the pointer to say hi, even from the box.
+    var visitAt: CGFloat = 0
+    private var visitPending = false
 
     var isHome: Bool { act == .inBox || act == .leaving }
     private var committed: Bool {
         if swat != nil { return true }
         switch act {
-        case .leaving, .air, .held, .startle, .land, .pin: return true
+        case .leaving, .air, .held, .startle, .land, .pin, .dizzy: return true
         default: return false
         }
     }
@@ -217,6 +235,7 @@ final class CatSim {
     func boot(pointer: CGPoint) {
         ptrX = pointer.x; ptrY = pointer.y
         go(.inBox, ActData(next: CGFloat.random(in: roamDelay) * 0.5))
+        visitAt = rnd(300, 600)
         d.peek = Spring(0.95, f: 3, z: 0.55)
         placeInBox(0.95)
         initTail()
@@ -229,6 +248,16 @@ final class CatSim {
                                      (.bow, clamp01(bow.x)), (.leap, clamp01(leap.x)), (.held, clamp01(hold.x))]
         var p = Pose.stand
         for (pose, w) in ws { p = p.blended(toward: pose, by: w) }
+        // held by the scruff: the lower body swings and stretches behind it instead of moving as one piece
+        let hw = clamp01(hold.x)
+        if hw > 0.001 {
+            let fs: CGFloat = facing.x >= 0 ? 1 : -1
+            let sway = dangle.x / scale * fs * hw, drop = stretch.x * hw
+            p.cx += sway * 0.3; p.cy -= drop * 0.3
+            p.hx += sway; p.hy -= drop
+            p.ffx += sway * 0.55; p.ffy -= drop * 0.4
+            p.fbx += sway * 1.35 + sin(time * 2.1) * 1.5 * hw; p.fby -= drop * 1.3
+        }
         // breathing, butt wiggle
         let br = sin(breath)
         p.cr *= 1 + 0.03 * br; p.cy += 0.6 * br; p.ky += 0.5 * br
@@ -269,14 +298,18 @@ final class CatSim {
         let g = clamp01(groom.x), pw = clamp01(paw.x)
         if g > 0, let nf = feet[.nf] { feet[.nf] = CGPoint(x: lerp(nf.x, p.kx + 4, g), y: lerp(nf.y, p.ky - 14, g)) }
         if pw > 0, let nf = feet[.nf] { feet[.nf] = CGPoint(x: lerp(nf.x, pawX.x, pw), y: lerp(nf.y, pawY.x, pw)) }
+        // Front legs are about as long as the shoulder is high, so they stand nearly straight like a
+        // real cat's and only fold at the wrist (forwards) as the paw lifts. Reaching, grooming,
+        // hooking the rim and dangling keep the elbow-back bend.
+        let pawWork = max(groom.x, paw.x, rim.x, hold.x) > 0.3
         var legs: [LegID: Leg] = [:]
         for leg in LegID.allCases {
             let a = leg.front ? shoulder : hipJoint
-            let l1: CGFloat = leg.front ? 13 : 14, l2: CGFloat = leg.front ? 14 : 15
+            let l1: CGFloat = leg.front ? 12 : 14, l2: CGFloat = leg.front ? 13 : 15
             var f = feet[leg] ?? a
             let dist = hypot(f.x - a.x, f.y - a.y), maxLen = l1 + l2
             if dist > maxLen { f = CGPoint(x: a.x + (f.x - a.x) * maxLen / dist, y: a.y + (f.y - a.y) * maxLen / dist) }
-            legs[leg] = Leg(anchor: a, knee: solveIK(a, f, l1, l2), foot: f)
+            legs[leg] = Leg(anchor: a, knee: solveIK(a, f, l1, l2, forward: leg.front && !pawWork), foot: f)
         }
         return Skeleton(p: p, legs: legs, shoulder: shoulder)
     }
@@ -371,6 +404,7 @@ final class CatSim {
         paw.step(dt); pawX.step(dt); pawY.step(dt); rim.step(dt)
         groom.step(dt); wiggle.step(dt); purr.step(dt)
         tailBase.step(dt); tailCurl.step(dt); tailAmp.step(dt); tailPuff.step(dt)
+        dizzy.step(dt); dangle.step(dt); stretch.step(dt)
     }
 
     private func trackPointer(_ raw: CGPoint, _ dt: CGFloat) {
@@ -383,6 +417,20 @@ final class CatSim {
         }
         ptrX = raw.x; ptrY = raw.y
         ptrSpeed = hypot(ptrVX, ptrVY)
+        // Add up how much the pointer's heading turns while it moves fast. Circling adds up,
+        // back-and-forth cancels out. Slow loops never get far because it's forgotten at ~35%/s.
+        if ptrSpeed > 600 {
+            let h = atan2(ptrVY, ptrVX)
+            if let last = ptrHeading {
+                var dh = h - last
+                if dh > .pi { dh -= 2 * .pi } else if dh < -.pi { dh += 2 * .pi }
+                spin += dh
+            }
+            ptrHeading = h
+        } else {
+            ptrHeading = nil
+        }
+        spin -= spin * min(1, dt * 0.35)
     }
 
     // MARK: Helpers
@@ -534,6 +582,8 @@ final class CatSim {
     }
 
     private func decideOut(_ per: Perception) -> Act {
+        if time < dizzyUntil { return .dizzy }
+        if visitPending { return .visit }
         let lowPtr = ptrY - floorY < 110
         if interest > 0.35 && per.near {
             if per.dH < 78 * scale { return pick([(.swat, 45), (.watch, 35), (.groom, 8 * (1 - playful)), (.sit, 10)]) }
@@ -543,7 +593,8 @@ final class CatSim {
         if time - outSince > d.bored || (per.idle > 40 && chance(0.4)) {
             return per.idle > 40 && chance(0.4) ? .loaf : .goHome
         }
-        return pick([(.sit, 22), (.look, 18), (.wander, 26), (.groom, 12), (.yawn, 7), (.stretch, 7), (.loaf, per.idle > 15 ? 18 : 6)])
+        return pick([(.sit, 22), (.look, 18), (.wander, 26), (.groom, 12), (.yawn, 7), (.stretch, 7),
+                     (.loaf, per.idle > 15 ? 18 : 10), (.zoomies, 4 * playful)])
     }
 
     private func enter(_ a: Act) {
@@ -554,12 +605,21 @@ final class CatSim {
         case .groom: n.dur = rnd(2.5, 4.5)
         case .yawn: n.dur = 1.9
         case .stretch: n.dur = 1.8
-        case .loaf: n.dur = rnd(6, 12)
+        case .loaf: n.dur = rnd(6, 12); n.ready = chance(0.3)   // ready: drifts off into a nap
         case .wander: n.x = clamp(pos.x + rnd(150, 420) * (chance(0.5) ? 1 : -1), minX, maxX)
         case .watch: n.dur = rnd(1.4, 3.2); n.tiltSign = chance(0.5) ? 1 : -1
         case .approach: n.dur = 4
         case .stalk: n.dur = 7
+        case .visit:
+            n.dur = rnd(4, 8); n.tiltSign = chance(0.5) ? 1 : -1
+            visitPending = false; visitAt = time + rnd(300, 600)
+        case .zoomies:
+            var side: CGFloat = chance(0.5) ? 1 : -1
+            if (side > 0 ? maxX - pos.x : pos.x - minX) < 250 { side = -side }
+            n.x = clamp(pos.x + side * rnd(300, 600), minX, maxX)
+            n.left = chance(0.5) ? 1 : 0
         case .swat:
+            faceTo(ptrX)
             let jumps = chance(0.35) ? 2 : 1
             startSwat(CGPoint(x: ptrX, y: ptrY), jumps: jumps)
             n.left = jumps - 1
@@ -573,6 +633,8 @@ final class CatSim {
         yawn.target = 0; groom.target = 0; wiggle.target = 0; purr.target = 0
         happy.target = time < happyUntil ? 1 : 0
         tilt.target = 0; earL.target = 0; earR.target = 0; rim.target = 0
+        dizzy.target = time < dizzyUntil ? 1 : 0
+        dangle.target = 0; stretch.target = 0
         if swat == nil { paw.target = 0 }
         open.target = sleeping ? 0 : 1
         dil.target = 0.25 + 0.4 * clamp01((220 - per.dH) / 200) * (per.near ? 1 : 0)
@@ -589,6 +651,13 @@ final class CatSim {
         blinkMaybe()
         if !sleeping && time.truncatingRemainder(dividingBy: 7) < dt && chance(0.5) { earTwitch() }
 
+        // Spun round in fast circles: dizzy, wherever it is (even dangling from the pointer).
+        if abs(spin) > 25 && per.dH < 520 * scale && !sleeping && time > dizzyUntil + 2 {
+            spin = 0
+            dizzyUntil = time + rnd(3.5, 5)
+            if !isHome && !committed { swat = nil; paw.target = 0; wiggle.target = 0; enter(.dizzy); return }
+        }
+
         // Interrupts
         if !isHome && !committed && a != .sleep {
             if per.startle { startle(); return }
@@ -598,6 +667,10 @@ final class CatSim {
                 noticed = true
                 if chance(0.35 + 0.55 * playful) { earL.v += 8; earR.v += 8; enter(.watch) }
             }
+        }
+
+        if !isHome && !committed && time > visitAt && [.sit, .look, .wander, .groom, .loaf, .yawn, .stretch].contains(act) {
+            enter(.visit)
         }
 
         switch act {
@@ -637,7 +710,7 @@ final class CatSim {
             if t > d.dur { enter(decideOut(per)) }
         case .loaf:
             pose(.lie); brake(dt); mood(.relaxed); open.target = t > 2 ? 0.45 : 1; idleLook(per, 0.4)
-            if per.idle > 25 && t > 4 { go(.sleep, ActData(bored: d.bored)) }
+            if (per.idle > 25 || d.ready) && t > 4 { go(.sleep, ActData(dur: rnd(20, 50), bored: d.bored)) }
             else if t > d.dur { enter(decideOut(per)) }
         case .sleep: sleepTick(dt, per)
         case .wander:
@@ -672,6 +745,18 @@ final class CatSim {
             }
         case .goHome: goHome(dt)
         case .held: heldTick()
+        case .dizzy: dizzyTick(dt)
+        case .visit: visit(dt, per)
+        case .zoomies:
+            pose(.stand); mood(.happy); lookForward(); earL.target = -0.2; earR.target = -0.2
+            if moveToward(d.x, 340, dt, 12) {
+                if d.left > 0 {
+                    d.left -= 1
+                    d.x = clamp(pos.x - sgn(facing.target) * rnd(250, 450), minX, maxX)
+                } else {
+                    enter(.sit)
+                }
+            }
         }
         updateSwat(dt)
     }
@@ -686,7 +771,7 @@ final class CatSim {
             squash.target = 1; boxClip = nil
             let side: CGFloat = box.x + boxW + 70 < maxX ? 1 : -1
             outSince = time
-            let bored = rnd(60, 150)
+            let bored = rnd(90, 240)
             // clear the rim comfortably, then drop to the floor beside the box
             launch(box.x + boxW / 2 + side * (boxW / 2 + 55 * scale), floorY,
                    box.y + boxRim + 40 * scale - max(pos.y, floorY), .land)
@@ -778,10 +863,12 @@ final class CatSim {
         if per.near && per.moving {
             d.stir += dt
             if d.stir > 0.05 && d.stir - dt <= 0.05 { earTwitch() }
-            if d.stir > 1.2 { sleeping = false; open.target = 1; enter(.yawn) }
+            if d.stir > 1.2 { sleeping = false; open.target = 1; enter(.yawn); return }
         } else {
             d.stir = max(0, d.stir - dt * 0.5)
         }
+        // a nap, not hibernation: wakes up by itself and stretches
+        if d.dur > 0 && t > d.dur { sleeping = false; open.target = 1; enter(chance(0.6) ? .stretch : .yawn) }
     }
 
     private func goHome(_ dt: CGFloat) {
@@ -825,28 +912,91 @@ final class CatSim {
         if per.startle || (ptrSpeed > 2400 && per.dH < 170) { duckUntil = time + 1.3 }
         if swat != nil { peek = 1.25 }                 // rise up to bat over the rim
         if time < duckUntil { peek = 0 }
+        let dizzyNow = time < dizzyUntil
+        if dizzyNow { peek = 0.88 + sin(time * 2.2) * 0.07 }   // sways woozily at the rim
         d.peek.target = peek
         d.peek.step(dt)
         placeInBox(d.peek.x)
         rim.target = d.peek.x > 0.85 && !sleepy ? 1 : 0
         open.target = sleeping ? 0 : 1
-        if (per.near && interest > 0.15) || per.dH < 160 {
+        if dizzyNow {
+            // swirly eyes do the looking
+        } else if (per.near && interest > 0.15) || per.dH < 160 {
             lookAt(ptrX, ptrY)
+            faceTo(ptrX, 30 * scale)     // turn the whole body, not just the head
         } else if t.truncatingRemainder(dividingBy: 2.6) < dt {
             gx.target = rnd(-0.7, 0.7); gy.target = rnd(-0.2, 0.4); headFacing.target = chance(0.5) ? 1 : -1
         }
         tilt.target = per.idle > 0.4 && per.idle < 3 && per.dH < 200 ? 0.28 : 0
+        if dizzyNow {
+            lean.target = sin(time * 2.6) * 0.09
+            tilt.target = sin(time * 3.3) * 0.3; pitch.target = cos(time * 3.3) * 0.12
+            earL.target = 0.45; earR.target = 0.2
+        } else {
+            lean.target = 0
+        }
         // petting in the box
         if petTime > 0.25 {
             happy.target = 1; purr.target = 1
             if t.truncatingRemainder(dividingBy: 0.7) < dt { emitHeart() }
         }
         // batting from the box
-        if swat == nil && per.dH < 75 * scale && per.dH > 30 * scale && per.moving && ptrSpeed < 1500 && d.peek.x > 0.9 && chance(dt * 1.6) {
+        let facingPtr = abs(ptrX - pos.x) < 12 * scale || (sgn(ptrX - pos.x) == sgn(facing.x) && abs(facing.x) > 0.8)
+        if swat == nil && !dizzyNow && facingPtr && per.dH < 75 * scale && per.dH > 30 * scale && per.moving && ptrSpeed < 1500 && d.peek.x > 0.9 && chance(dt * 1.6) {
             startSwat(CGPoint(x: ptrX, y: ptrY))
         }
         if swat != nil { rim.target = 0 }
-        if roams && time > d.next && !sleepy && petTime == 0 { letOut() }
+        if roams && (time > d.next || time > visitAt) && !sleepy && petTime == 0 && !dizzyNow {
+            if time > visitAt { visitPending = true }
+            letOut()
+        }
+    }
+
+    private func dizzyTick(_ dt: CGFloat) {
+        mood(.relaxed); tailAmp.target = 0.02
+        if time < dizzyUntil {
+            // stagger a few wobbly steps, then plop down and sway
+            let fs: CGFloat = facing.target >= 0 ? 1 : -1
+            if t < 1.6 {
+                pose(.stand)
+                velX = fs * 32 * scale * (0.5 + 0.5 * sin(t * 3)); pos.x += velX * dt
+            } else {
+                pose(.sit); brake(dt)
+            }
+            lean.target = sin(t * 2.4) * 0.13
+            tilt.target = sin(t * 3.3) * 0.3; pitch.target = cos(t * 3.3) * 0.12
+            earL.target = 0.45; earR.target = 0.2
+            headFacing.target = fs
+        } else {
+            // shake it off
+            if d.wait == 0 { d.wait = t }
+            let k = t - d.wait, fade = max(0, 1 - k / 0.6)
+            pose(.sit); brake(dt); lean.target = 0
+            tilt.target = sin(k * 34) * 0.32 * fade
+            earL.target = sin(k * 34) * 0.4 * fade; earR.target = -sin(k * 34) * 0.4 * fade
+            if k > 0.75 { enter(chance(0.5) ? .groom : .sit) }
+        }
+    }
+
+    /// Trots over to the pointer with its tail up, sits by it and looks up. Follows once or twice if it moves off.
+    private func visit(_ dt: CGFloat, _ per: Perception) {
+        let tx = clamp(ptrX, minX, maxX)
+        let side: CGFloat = sgn(tx - pos.x) == 0 ? 1 : sgn(tx - pos.x)
+        mood(.happy); lookAt(ptrX, ptrY)
+        if !d.ready {
+            pose(.stand)
+            if moveToward(tx - side * 55 * scale, 120, dt, 8) {
+                d.ready = true; d.wait = 0; faceTo(ptrX, 1); emitHeart()
+            }
+            if t > 25 { enter(.sit) }
+        } else {
+            pose(.sit); brake(dt); faceTo(ptrX, 10)
+            happy.target = 0; tilt.target = 0.22 * d.tiltSign
+            d.wait += dt
+            if chance(dt * 0.4) { emitHeart() }
+            if abs(tx - pos.x) > 160 * scale && d.left < 2 { d.ready = false; d.left += 1 }
+            else if d.wait > d.dur { enter(decideOut(per)) }
+        }
     }
 
     private func heldTick() {
@@ -856,6 +1006,8 @@ final class CatSim {
         open.target = 1; dil.target = 1
         lookAt(ptrX + facing.x * 40, ptrY - 80)
         swing.target = clamp(-ptrVX / 2200, -0.5, 0.5)
+        dangle.target = clamp(-ptrVX * 0.018, -26, 26) * scale
+        stretch.target = clamp(ptrVY * 0.01, -6, 12)
         pos = CGPoint(x: ptrX, y: ptrY - 8 * scale)
         boxShow.target = 1
     }
@@ -901,12 +1053,13 @@ final class CatSim {
             velX = clamp(ptrVX * 0.5, -500, 500); velY = clamp(ptrVY * 0.3, -200, 400)
             boxShow.target = 0
             outSince = time
-            go(.air, ActData(bored: rnd(60, 150), then: .land))
+            go(.air, ActData(bored: rnd(90, 240), then: .land))
             d.landY = floorY
         }
     }
 
     var statusLabel: String {
+        if act == .inBox && time < dizzyUntil { return "Dizzy in the box" }
         if act == .inBox && sleeping { return "Dozing in the box" }
         if act == .inBox && happy.target > 0 { return "Being petted" }
         return act.label

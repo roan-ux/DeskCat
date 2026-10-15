@@ -60,6 +60,7 @@ extension CatSim {
             }
         }
         if sleeping { drawZzz(ctx, sk) }
+        if dizzy.x > 0.03 { drawStars(ctx, sk) }
         for h in hearts { drawHeart(ctx, h) }
     }
 
@@ -158,6 +159,20 @@ extension CatSim {
         ctx.setStrokeColor(pal.detail)
         ctx.setLineCap(.round)
         ctx.setLineWidth(2.2)
+        if dizzy.x > 0.4 {                   // @ @
+            ctx.setFillColor(pal.sclera)
+            ctx.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+            ctx.setStrokeColor(pal.pupil)
+            ctx.setLineWidth(1.6)
+            let spinAngle = time * 7
+            for i in 0...36 {
+                let u = CGFloat(i) / 36, th = u * .pi * 5 + spinAngle, rr = r * 0.85 * u
+                let pt = CGPoint(x: x + cos(th) * rr, y: y + sin(th) * rr)
+                if i == 0 { ctx.move(to: pt) } else { ctx.addLine(to: pt) }
+            }
+            ctx.strokePath()
+            return
+        }
         if clamp01(happy.x) > 0.5 {          // ^ ^
             ctx.move(to: CGPoint(x: x - r * 0.8, y: y - r * 0.15))
             ctx.addQuadCurve(to: CGPoint(x: x + r * 0.8, y: y - r * 0.15), control: CGPoint(x: x, y: y + r * 0.8))
@@ -233,6 +248,29 @@ extension CatSim {
             ctx.saveGState()
             ctx.setAlpha(sin(.pi * u) * 0.85)
             ("z" as NSString).draw(at: CGPoint(x: h.x + (18 + u * 22) * dir * scale, y: h.y + (22 + u * 34) * scale), withAttributes: attrs)
+            ctx.restoreGState()
+        }
+    }
+
+    /// Little stars orbiting above the head; the ones on the far side of the loop are smaller and dimmer.
+    private func drawStars(_ ctx: CGContext, _ sk: Skeleton) {
+        let h = toWorld(sk.p.kx, sk.p.ky), s = scale, k = clamp01(dizzy.x)
+        let cx = h.x, cy = h.y + 30 * s
+        for i in 0..<3 {
+            let a = time * 4 + CGFloat(i) * .pi * 2 / 3
+            let depth = (sin(a) + 1) / 2          // 0 far, 1 near
+            let c = CGPoint(x: cx + cos(a) * 26 * s, y: cy - sin(a) * 6 * s)
+            let r = (3.2 + 2 * depth) * s * k
+            ctx.saveGState()
+            ctx.setAlpha(k * (0.55 + 0.45 * depth))
+            ctx.setFillColor(Palette.current.star)
+            for j in 0..<10 {
+                let th = CGFloat(j) * .pi / 5 + .pi / 2 + time * 3, rr = j % 2 == 0 ? r : r * 0.45
+                let pt = CGPoint(x: c.x + cos(th) * rr, y: c.y + sin(th) * rr)
+                if j == 0 { ctx.move(to: pt) } else { ctx.addLine(to: pt) }
+            }
+            ctx.closePath()
+            ctx.fillPath()
             ctx.restoreGState()
         }
     }
