@@ -27,68 +27,75 @@ final class SettingsWindowController {
     }
 }
 
+/// The window's editable state. An ObservableObject rather than @State so DeskCat builds with
+/// the Command Line Tools alone, which don't ship SwiftUI's macro plugin.
+@MainActor
+private final class SettingsModel: ObservableObject {
+    @Published var look = Look.current
+    @Published var name = Settings.name ?? ""
+    @Published var roams = Settings.roamsOnItsOwn
+    @Published var openAtLogin = SMAppService.mainApp.status == .enabled
+    @Published var loginNote: String?
+}
+
 private struct SettingsView: View {
     let onLookChange: () -> Void
     let onRename: (String) -> Void
 
-    @State private var look = Look.current
-    @State private var name = Settings.name ?? ""
-    @State private var roams = Settings.roamsOnItsOwn
-    @State private var openAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var loginNote: String?
+    @StateObject private var m = SettingsModel()
 
     var body: some View {
         Form {
             Section("Cat") {
-                TextField("Name on the box", text: $name, prompt: Text("e.g. Mochi"))
-                LabeledContent("Coat") { SwatchRow(swatches: Look.coats, selection: $look.coat) }
-                LabeledContent("Eyes") { SwatchRow(swatches: Look.eyeColors, selection: $look.eyes) }
-                Picker("Size", selection: $look.size) {
+                TextField("Name on the box", text: $m.name, prompt: Text("e.g. Mochi"))
+                LabeledContent("Coat") { SwatchRow(swatches: Look.coats, selection: $m.look.coat) }
+                LabeledContent("Eyes") { SwatchRow(swatches: Look.eyeColors, selection: $m.look.eyes) }
+                Picker("Size", selection: $m.look.size) {
                     ForEach(CatSize.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Picker("Personality", selection: $look.personality) {
+                Picker("Personality", selection: $m.look.personality) {
                     ForEach(Personality.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
             }
             Section("Box") {
-                LabeledContent("Colour") { SwatchRow(swatches: Look.boxColors, selection: $look.box) }
+                LabeledContent("Colour") { SwatchRow(swatches: Look.boxColors, selection: $m.look.box) }
             }
             Section("Behaviour") {
-                Toggle("Wander out of the box on its own", isOn: $roams)
-                Toggle("Open at login", isOn: $openAtLogin)
-                if let loginNote {
+                Toggle("Wander out of the box on its own", isOn: $m.roams)
+                Toggle("Open at login", isOn: $m.openAtLogin)
+                if let loginNote = m.loginNote {
                     Text(loginNote).font(.caption).foregroundStyle(.secondary)
                 }
             }
             HStack {
                 Spacer()
-                Button("Reset look to defaults") { look = .standard }
+                Button("Reset look to defaults") { m.look = .standard }
             }
         }
         .formStyle(.grouped)
         // A grouped Form scrolls, so it has no height of its own; without one the window collapses to its title bar.
         .frame(width: 440, height: 560)
-        .onChange(of: look) { newValue in
+        .onChange(of: m.look) { newValue in
             Look.current = newValue
             onLookChange()
         }
-        .onChange(of: name) { newValue in
+        .onChange(of: m.name) { newValue in
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { onRename(String(trimmed.prefix(24))) }
         }
-        .onChange(of: roams) { Settings.roamsOnItsOwn = $0 }
-        .onChange(of: openAtLogin) { setOpenAtLogin($0) }
+        .onChange(of: m.roams) { Settings.roamsOnItsOwn = $0 }
+        .onChange(of: m.openAtLogin) { setOpenAtLogin($0) }
     }
 
     private func setOpenAtLogin(_ on: Bool) {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-            loginNote = nil
+            m.loginNote = nil
         } catch {
-            loginNote = "This works once DeskCat runs as an app (build it with scripts/make-app.sh and put it in Applications)."
-            openAtLogin = SMAppService.mainApp.status == .enabled
+            m.loginNote = "This works once DeskCat runs as an app (build it with scripts/make-app.sh and put it in Applications)."
+            m.openAtLogin = SMAppService.mainApp.status == .enabled
         }
     }
 }
