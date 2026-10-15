@@ -52,9 +52,8 @@ struct Skeleton {
     var shoulder: CGPoint
 }
 
-/// Two-bone IK. By default the joint bends backwards, like a cat's hock (and its elbow when it
-/// reaches up with a paw). `forward` bends it the other way, like a front wrist folding mid-step.
-func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat, forward: Bool = false) -> CGPoint {
+/// Two-bone IK. The joint bends backwards, like a cat's wrist and hock.
+func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat) -> CGPoint {
     let dx = b.x - a.x, dy = b.y - a.y
     let d = max(hypot(dx, dy), 0.001)
     if d >= l1 + l2 - 0.01 {
@@ -64,7 +63,7 @@ func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat, forward: 
     let along = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
     let h = sqrt(max(0, l1 * l1 - along * along))
     let nx = -uy, ny = ux
-    let s: CGFloat = (nx > 0) != forward ? -1 : 1
+    let s: CGFloat = nx > 0 ? -1 : 1
     return CGPoint(x: a.x + ux * along + nx * h * s, y: a.y + uy * along + ny * h * s)
 }
 
@@ -298,18 +297,14 @@ final class CatSim {
         let g = clamp01(groom.x), pw = clamp01(paw.x)
         if g > 0, let nf = feet[.nf] { feet[.nf] = CGPoint(x: lerp(nf.x, p.kx + 4, g), y: lerp(nf.y, p.ky - 14, g)) }
         if pw > 0, let nf = feet[.nf] { feet[.nf] = CGPoint(x: lerp(nf.x, pawX.x, pw), y: lerp(nf.y, pawY.x, pw)) }
-        // Front legs are about as long as the shoulder is high, so they stand nearly straight like a
-        // real cat's and only fold at the wrist (forwards) as the paw lifts. Reaching, grooming,
-        // hooking the rim and dangling keep the elbow-back bend.
-        let pawWork = max(groom.x, paw.x, rim.x, hold.x) > 0.3
         var legs: [LegID: Leg] = [:]
         for leg in LegID.allCases {
             let a = leg.front ? shoulder : hipJoint
-            let l1: CGFloat = leg.front ? 12 : 14, l2: CGFloat = leg.front ? 13 : 15
+            let l1: CGFloat = leg.front ? 13 : 14, l2: CGFloat = leg.front ? 14 : 15
             var f = feet[leg] ?? a
             let dist = hypot(f.x - a.x, f.y - a.y), maxLen = l1 + l2
             if dist > maxLen { f = CGPoint(x: a.x + (f.x - a.x) * maxLen / dist, y: a.y + (f.y - a.y) * maxLen / dist) }
-            legs[leg] = Leg(anchor: a, knee: solveIK(a, f, l1, l2, forward: leg.front && !pawWork), foot: f)
+            legs[leg] = Leg(anchor: a, knee: solveIK(a, f, l1, l2), foot: f)
         }
         return Skeleton(p: p, legs: legs, shoulder: shoulder)
     }
