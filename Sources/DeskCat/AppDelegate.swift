@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(to: menu, "Settings…", #selector(openSettings), key: ",")
         add(to: menu, "Rename…", #selector(rename))
         add(to: menu, "Wander on its own", #selector(toggleRoam)).state = Settings.roamsOnItsOwn ? .on : .off
+        add(to: menu, "Sounds", #selector(toggleSound)).state = Settings.soundOn ? .on : .off
         add(to: menu, "Move box to the corner", #selector(resetBox))
         menu.addItem(.separator())
         add(to: menu, "Quit DeskCat", #selector(NSApplication.terminate(_:)), key: "q", target: NSApp)
@@ -79,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleRoam() {
         Settings.roamsOnItsOwn.toggle()
+    }
+
+    @objc private func toggleSound() {
+        Settings.soundOn.toggle()
     }
 
     @objc private func resetBox() {

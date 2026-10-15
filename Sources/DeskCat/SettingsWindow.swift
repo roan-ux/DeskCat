@@ -34,6 +34,8 @@ private final class SettingsModel: ObservableObject {
     @Published var look = Look.current
     @Published var name = Settings.name ?? ""
     @Published var roams = Settings.roamsOnItsOwn
+    @Published var soundOn = Settings.soundOn
+    @Published var volume = Settings.soundVolume
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
     @Published var loginNote: String?
 }
@@ -69,6 +71,17 @@ private struct SettingsView: View {
                     Text(loginNote).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Sound") {
+                Toggle("Purring and meows", isOn: $m.soundOn)
+                LabeledContent("Volume") {
+                    HStack {
+                        Image(systemName: "speaker.fill").foregroundStyle(.secondary)
+                        Slider(value: $m.volume, in: 0...1)
+                        Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!m.soundOn)
+            }
             HStack {
                 Spacer()
                 Button("Reset look to defaults") { m.look = .standard }
@@ -76,7 +89,7 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         // A grouped Form scrolls, so it has no height of its own; without one the window collapses to its title bar.
-        .frame(width: 440, height: 560)
+        .frame(width: 440, height: 660)
         .onChange(of: m.look) { newValue in
             Look.current = newValue
             onLookChange()
@@ -86,6 +99,8 @@ private struct SettingsView: View {
             if !trimmed.isEmpty { onRename(String(trimmed.prefix(24))) }
         }
         .onChange(of: m.roams) { Settings.roamsOnItsOwn = $0 }
+        .onChange(of: m.soundOn) { Settings.soundOn = $0 }
+        .onChange(of: m.volume) { Settings.soundVolume = $0 }
         .onChange(of: m.openAtLogin) { setOpenAtLogin($0) }
     }
 

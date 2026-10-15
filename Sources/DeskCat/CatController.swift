@@ -7,6 +7,7 @@ import QuartzCore
 @MainActor
 final class CatController: NSObject {
     let sim = CatSim()
+    private let audio = CatAudio()
 
     var menuProvider: (() -> NSMenu?)? {
         didSet {
@@ -130,6 +131,21 @@ final class CatController: NSObject {
         let dt = CGFloat(min(elapsed, 1.0 / 20.0))
         sim.step(dt, pointer: NSEvent.mouseLocation)
         syncWindows()
+        playSounds()
+    }
+
+    /// Plays what the cat said this frame, panned to where it is on its screen.
+    private func playSounds() {
+        let on = Settings.soundOn, volume = Float(Settings.soundVolume)
+        let head = sim.headWorld()
+        let screen = NSScreen.screens.first { $0.frame.contains(head) } ?? NSScreen.main
+        var pan: Float = 0
+        if let f = screen?.frame { pan = Float(max(-1, min(1, (head.x - f.midX) / (f.width / 2)))) * 0.85 }
+        if on && volume > 0 {
+            for sound in sim.sounds { audio.play(sound, pan: pan, volume: volume) }
+        }
+        sim.sounds.removeAll()
+        audio.update(purring: on ? Float(max(0, min(1, sim.purr.x))) : 0, pan: pan, volume: volume)
     }
 
     /// The cat lives on the screen its box is on; the floor is just above the Dock.

@@ -226,6 +226,9 @@ final class CatSim {
     var hearts: [Heart] = []
     var zzz: CGFloat = 0
     var dizzyUntil: CGFloat = -10
+    /// Sounds to play this frame; the controller drains it.
+    var sounds: [CatSound] = []
+    private var lastVocal: CGFloat = -10
     /// Every 5 to 10 minutes it comes over to the pointer to say hi, even from the box.
     var visitAt: CGFloat = 0
     private var visitPending = false
@@ -540,6 +543,13 @@ final class CatSim {
         go(.air, ActData(landY: ty, then: then))
     }
 
+    /// Queues a sound, with probability `p`. Vocal sounds keep a few seconds apart so it isn't chatty.
+    private func say(_ sound: CatSound, _ p: CGFloat = 1) {
+        guard chance(p), sound == .chatter || time - lastVocal > 3, sounds.count < 4 else { return }
+        lastVocal = time
+        sounds.append(sound)
+    }
+
     private func emitHeart() {
         let h = headWorld()
         hearts.append(Heart(x: h.x + rnd(-12, 12) * scale, y: h.y + 26 * scale, age: 0))
@@ -597,7 +607,7 @@ final class CatSim {
         return Perception(head: h, dH: dH, idle: idle, moving: moving, near: near, startle: dH < 150 && ptrSpeed > 2600)
     }
 
-    private func pick(_ opts: [(Act, CGFloat)]) -> Act {
+    private func pick<T>(_ opts: [(T, CGFloat)]) -> T {
         let total = opts.reduce(0) { $0 + max(0, $1.1) }
         var r = CGFloat.random(in: 0..<max(total, 0.0001))
         for (a, w) in opts {
@@ -682,6 +692,7 @@ final class CatSim {
         if abs(spin) > 25 && per.dH < 520 * scale && !sleeping && time > dizzyUntil + 2 {
             spin = 0
             dizzyUntil = time + rnd(3.5, 5)
+            say(.mew, 0.7)      // "mew?"
             if !isHome && !committed { swat = nil; paw.target = 0; wiggle.target = 0; enter(.dizzy); return }
         }
 
@@ -689,6 +700,7 @@ final class CatSim {
         if !isHome && !committed && a != .sleep {
             if per.startle { startle(); return }
             if petTime > 0.25 && a != .petted {
+                say(.trill, 0.6)
                 go(.petted, ActData(bored: d.bored))
             } else if per.near && per.moving && !noticed && [.sit, .look, .wander, .groom, .loaf, .yawn, .stretch].contains(a) {
                 noticed = true
@@ -696,6 +708,7 @@ final class CatSim {
             }
         }
 
+        if [.sit, .look, .wander].contains(act) && chance(dt / 150) { say(chance(0.7) ? .meow : .mew) }
         if !isHome && !committed && time > visitAt && [.sit, .look, .wander, .groom, .loaf, .yawn, .stretch].contains(act) {
             enter(.visit)
         }
@@ -710,6 +723,7 @@ final class CatSim {
         case .pin:
             pose(.crouch); brake(dt); paw.target = 1; pawX.target = 34; pawY.target = 2
             mood(.hunt); lookAt(ptrX, ptrY)
+            if t < 0.02 { say(.trill, 0.4) }
             if t > 0.6 { paw.target = 0; playful = max(0.2, playful - 0.1); enter(chance(0.5) ? .sit : .watch) }
         case .sit:
             pose(.sit); brake(dt); mood(.relaxed); idleLook(per)
@@ -796,6 +810,7 @@ final class CatSim {
             placeInBox(d.peekValue)
         } else {
             squash.target = 1; boxClip = nil
+            say(.trill, 0.3)
             let side: CGFloat = box.x + boxW + 70 < maxX ? 1 : -1
             outSince = time
             let bored = rnd(90, 240)
@@ -838,6 +853,7 @@ final class CatSim {
         let away: CGFloat = sgn(pos.x - ptrX) == 0 ? 1 : sgn(pos.x - ptrX)
         velX = away * 220; velY = 520; air = true; squash.x = 1.25; leap.target = 0.6
         facing.target = -away; tailPuff.target = 1.9
+        say(.hiss, 0.6)
         go(.startle, ActData(bored: d.bored))
     }
 
@@ -871,6 +887,7 @@ final class CatSim {
         } else {
             brake(dt); faceTo(ptrX); d.ready = true
             d.wiggle += dt; wiggle.target = d.wiggle > 0.3 ? 1 : 0
+            if d.wiggle > 0.3 && d.wiggle - dt <= 0.3 { say(.chatter, 0.5) }
             if d.wait == 0 { d.wait = rnd(0.9, 1.4) }
             if d.wiggle > d.wait {
                 wiggle.target = 0; squash.x = 0.82; earL.target = 0; earR.target = 0
@@ -895,7 +912,7 @@ final class CatSim {
             d.stir = max(0, d.stir - dt * 0.5)
         }
         // a nap, not hibernation: wakes up by itself and stretches
-        if d.dur > 0 && t > d.dur { sleeping = false; open.target = 1; enter(chance(0.6) ? .stretch : .yawn) }
+        if d.dur > 0 && t > d.dur { sleeping = false; open.target = 1; say(.mew, 0.3); enter(chance(0.6) ? .stretch : .yawn) }
     }
 
     private func goHome(_ dt: CGFloat) {
@@ -917,6 +934,7 @@ final class CatSim {
         facing.target = sgn(facing.target) == 0 ? 1 : sgn(facing.target)
         squash.x = 0.8; squash.target = 1
         pose(.sit); sit.snap(1); crouch.snap(0); leap.snap(0)
+        say(.trill, 0.25)
         var n = ActData(next: time + CGFloat.random(in: roamDelay))
         n.peek = Spring(0, f: 3, z: 0.55)
         n.peek.target = 1
@@ -964,6 +982,7 @@ final class CatSim {
         }
         // petting in the box
         if petTime > 0.25 {
+            if petTime - dt <= 0.25 { say(.trill, 0.5) }
             happy.target = 1; purr.target = 1
             if t.truncatingRemainder(dividingBy: 0.7) < dt { emitHeart() }
         }
@@ -1014,11 +1033,12 @@ final class CatSim {
             pose(.stand)
             if moveToward(tx - side * 55 * scale, 120, dt, 8) {
                 d.ready = true; d.wait = 0; faceTo(ptrX, 1); emitHeart()
+                say(pick([(.meow, 40), (.mew, 30), (.trill, 30)]))
             }
             if t > 25 { enter(.sit) }
         } else {
             pose(.sit); brake(dt); faceTo(ptrX, 10)
-            happy.target = 0; tilt.target = 0.22 * d.tiltSign
+            happy.target = 0; tilt.target = 0.22 * d.tiltSign; purr.target = 0.45
             d.wait += dt
             if chance(dt * 0.4) { emitHeart() }
             if abs(tx - pos.x) > 160 * scale && d.left < 2 { d.ready = false; d.left += 1 }
@@ -1117,6 +1137,7 @@ final class CatSim {
         swat = nil; paw.target = 0; happy.target = 0; purr.target = 0
         facing.target = sgn(facing.x) == 0 ? 1 : sgn(facing.x)
         heldGesture = chance(0.5) ? .reach : .paddle; heldNext = time + rnd(0.8, 1.6)   // first reaction to being lifted
+        if chance(0.55) { lastVocal = -10; say(chance(0.5) ? .demand : .meow) }
         go(.held)
     }
 
