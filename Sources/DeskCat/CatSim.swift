@@ -106,6 +106,9 @@ enum Act {
 
 enum Landing { case land, pin, box }
 
+/// What the paws are up to while the cat dangles from the pointer.
+enum HeldGesture { case limp, reach, paddle, tuck, reachDown, scramble }
+
 /// Scratch state for the current activity.
 struct ActData {
     var dur: CGFloat = 0
@@ -198,6 +201,13 @@ final class CatSim {
     /// While held, the hips and back legs lag behind the scruff like a loose pendulum (world x, sideways)
     /// and stretch down when lifted fast. Low damping so they keep swinging after the pointer stops.
     var dangle = Spring(0, f: 1.5, z: 0.16), stretch = Spring(0, f: 2.2, z: 0.25)
+    /// While held it keeps doing things with its paws: reaching, paddling the air, curling up.
+    /// Front/back paw offsets (cat-local), how curled the body is, and how hard the legs paddle.
+    var heldFX = Spring(0, f: 3.5, z: 0.55), heldFY = Spring(0, f: 3.5, z: 0.55)
+    var heldBX = Spring(0, f: 3, z: 0.6), heldBY = Spring(0, f: 3, z: 0.6)
+    var curl = Spring(0, f: 2, z: 0.6), paddle = Spring(0, f: 3, z: 0.8)
+    var paddlePhase: CGFloat = 0, paddleRate: CGFloat = 6
+    private var heldGesture = HeldGesture.limp, heldNext: CGFloat = 0
     var tailPhase: CGFloat = 0
     var tail: [CGPoint] = []
     var blinkAt: CGFloat = 0, blinkT: CGFloat = -1
@@ -256,6 +266,9 @@ final class CatSim {
             p.hx += sway; p.hy -= drop
             p.ffx += sway * 0.55; p.ffy -= drop * 0.4
             p.fbx += sway * 1.35 + sin(time * 2.1) * 1.5 * hw; p.fby -= drop * 1.3
+            // curling up: hips come forward and up under the chest, so the spine bends
+            let c = curl.x * hw
+            p.hx += c * 10; p.hy += c * 12; p.cx += c * 3; p.ky -= c * 3
         }
         // breathing, butt wiggle
         let br = sin(breath)
@@ -283,6 +296,23 @@ final class CatSim {
                 x += dx * moving; y += lift * moving
             }
             feet[leg] = CGPoint(x: x, y: y)
+        }
+        if hw > 0.001 {
+            // living paws while held; near and far legs paddle out of step
+            for leg in LegID.allCases {
+                guard var f = feet[leg] else { continue }
+                let ph = paddlePhase + (leg.near ? 0 : .pi) + (leg.front ? 0 : .pi / 2)
+                let amp = paddle.x * (leg.front ? 7 : 5)
+                let spread: CGFloat = leg.near ? 1 : -1
+                if leg.front {
+                    f.x += (heldFX.x + spread * 2 + amp * sin(ph)) * hw
+                    f.y += (heldFY.x + spread * 3 * clamp01(heldFY.x / 20) + amp * cos(ph)) * hw
+                } else {
+                    f.x += (heldBX.x + amp * sin(ph)) * hw
+                    f.y += (heldBY.x + amp * cos(ph)) * hw
+                }
+                feet[leg] = f
+            }
         }
         let shoulder = CGPoint(x: p.cx + 2, y: p.cy - p.cr * 0.45)
         let hipJoint = CGPoint(x: p.hx + 2, y: p.hy - p.hr * 0.35)
@@ -400,6 +430,7 @@ final class CatSim {
         groom.step(dt); wiggle.step(dt); purr.step(dt)
         tailBase.step(dt); tailCurl.step(dt); tailAmp.step(dt); tailPuff.step(dt)
         dizzy.step(dt); dangle.step(dt); stretch.step(dt)
+        heldFX.step(dt); heldFY.step(dt); heldBX.step(dt); heldBY.step(dt); curl.step(dt); paddle.step(dt)
     }
 
     private func trackPointer(_ raw: CGPoint, _ dt: CGFloat) {
@@ -630,6 +661,7 @@ final class CatSim {
         tilt.target = 0; earL.target = 0; earR.target = 0; rim.target = 0
         dizzy.target = time < dizzyUntil ? 1 : 0
         dangle.target = 0; stretch.target = 0
+        heldFX.target = 0; heldFY.target = 0; heldBX.target = 0; heldBY.target = 0; curl.target = 0; paddle.target = 0
         if swat == nil { paw.target = 0 }
         open.target = sleeping ? 0 : 1
         dil.target = 0.25 + 0.4 * clamp01((220 - per.dH) / 200) * (per.near ? 1 : 0)
@@ -739,7 +771,7 @@ final class CatSim {
                 stepAir(dt)
             }
         case .goHome: goHome(dt)
-        case .held: heldTick()
+        case .held: heldTick(dt)
         case .dizzy: dizzyTick(dt)
         case .visit: visit(dt, per)
         case .zoomies:
@@ -994,17 +1026,67 @@ final class CatSim {
         }
     }
 
-    private func heldTick() {
+    private func heldTick(_ dt: CGFloat) {
         pose(.stand); hold.target = 1; sit.target = 0
         earL.target = 0.5; earR.target = 0.5; mood(.scared); tailPuff.target = 1
         tailBase.target = -1.45; tailCurl.target = 0.08   // hangs down
         open.target = 1; dil.target = 1
-        lookAt(ptrX + facing.x * 40, ptrY - 80)
+
+        // Every second or two it changes what it's doing; being whisked around or lowered
+        // near the floor takes priority.
+        let nearFloor = ptrY - floorY < 130 * scale
+        if ptrSpeed > 1100 {
+            if heldGesture != .scramble { heldGesture = .scramble; heldNext = time + 0.8 }
+        } else if nearFloor && heldGesture != .reachDown && heldGesture != .scramble {
+            heldGesture = .reachDown; heldNext = time + rnd(1.5, 3)
+        } else if time > heldNext {
+            heldGesture = nearFloor ? .reachDown : pickHeld()
+            heldNext = time + rnd(1.0, 2.6)
+        }
+        let fs: CGFloat = facing.x >= 0 ? 1 : -1
+        switch heldGesture {
+        case .limp:
+            paddleRate = 2
+            lookAt(ptrX + fs * 40, ptrY - 80)
+        case .reach:      // paws up and forward, as if reaching for your arm
+            heldFX.target = 16; heldFY.target = 24; heldBX.target = 6; heldBY.target = 4
+            curl.target = 0.2; paddle.target = 0.15; paddleRate = 4
+            earL.target = 0.1; earR.target = 0.1
+            lookAt(ptrX + fs * 60, ptrY + 10)
+        case .paddle:     // air-walking
+            heldFX.target = 8; heldFY.target = 6; heldBX.target = 4; heldBY.target = 6
+            curl.target = 0.1; paddle.target = 1; paddleRate = 7
+            lookAt(ptrX + fs * 50, ptrY - 120)
+        case .tuck:       // curls up, paws tucked to the chest, tail curled under
+            heldFX.target = 10; heldFY.target = 14; heldBX.target = 14; heldBY.target = 18
+            curl.target = 1; paddle.target = 0; paddleRate = 2
+            tailCurl.target = 0.32; earL.target = 0.25; earR.target = 0.25
+            lookAt(ptrX + fs * 30, ptrY - 40)
+        case .reachDown:  // close to the floor: stretches all four legs down to land
+            heldFX.target = 6; heldFY.target = -10; heldBX.target = 2; heldBY.target = -12
+            curl.target = -0.2; paddle.target = 0.35; paddleRate = 5
+            earL.target = 0; earR.target = 0
+            lookAt(ptrX + fs * 20, floorY)
+        case .scramble:   // whisked about: paddling hard, ears back
+            heldFX.target = 10; heldFY.target = 8; heldBX.target = 4; heldBY.target = 8
+            curl.target = 0.3; paddle.target = 1.3; paddleRate = 11
+            earL.target = 0.8; earR.target = 0.8
+            lookAt(ptrX + fs * 40, ptrY - 80)
+        }
+        paddlePhase += dt * paddleRate
         swing.target = clamp(-ptrVX / 2200, -0.5, 0.5)
         dangle.target = clamp(-ptrVX * 0.018, -26, 26) * scale
         stretch.target = clamp(ptrVY * 0.01, -6, 12)
         pos = CGPoint(x: ptrX, y: ptrY - 8 * scale)
         boxShow.target = 1
+    }
+
+    private func pickHeld() -> HeldGesture {
+        let opts: [(HeldGesture, CGFloat)] = [(.limp, 25), (.reach, 22), (.paddle, 18), (.tuck, 15)]
+        let others = opts.filter { $0.0 != heldGesture }
+        var r = CGFloat.random(in: 0..<others.reduce(0) { $0 + $1.1 })
+        for (g, w) in others { r -= w; if r <= 0 { return g } }
+        return .limp
     }
 
     // MARK: Commands from the app
@@ -1034,6 +1116,7 @@ final class CatSim {
         boxClip = nil; rim.snap(0); air = false; held = true; sleeping = false
         swat = nil; paw.target = 0; happy.target = 0; purr.target = 0
         facing.target = sgn(facing.x) == 0 ? 1 : sgn(facing.x)
+        heldGesture = chance(0.5) ? .reach : .paddle; heldNext = time + rnd(0.8, 1.6)   // first reaction to being lifted
         go(.held)
     }
 
