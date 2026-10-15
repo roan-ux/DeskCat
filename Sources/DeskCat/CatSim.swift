@@ -1,0 +1,914 @@
+import CoreGraphics
+
+// The cat's body, physics and behaviour. Everything is in screen coordinates (points, y up).
+// This file is a direct port of the logic in `playground.html`, so the browser preview and the
+// Mac app behave the same. Keep the two in step when changing either.
+
+// MARK: - Rig
+
+/// One pose of the skeleton, in cat-local units: facing right, origin on the ground under the body.
+/// h = hips, c = chest (centre + radius), k = head centre, ff/fb = front/back foot.
+struct Pose {
+    var hx, hy, hr, cx, cy, cr, kx, ky, ffx, ffy, fbx, fby: CGFloat
+
+    static let stand  = Pose(hx: -20, hy: 27, hr: 14, cx: 16, cy: 29, cr: 15, kx: 33, ky: 50, ffx: 18, ffy: 0, fbx: -21, fby: 0)
+    static let sit    = Pose(hx: -11, hy: 15, hr: 17, cx: 5, cy: 36, cr: 14, kx: 10, ky: 63, ffx: 10, ffy: 0, fbx: 3, fby: 0)
+    static let crouch = Pose(hx: -21, hy: 23, hr: 14, cx: 15, cy: 15, cr: 14, kx: 33, ky: 22, ffx: 24, ffy: 0, fbx: -17, fby: 0)
+    static let lie    = Pose(hx: -16, hy: 13, hr: 14, cx: 13, cy: 13, cr: 14, kx: 31, ky: 27, ffx: 30, ffy: 1, fbx: -6, fby: 1)
+    static let bow    = Pose(hx: -20, hy: 31, hr: 14, cx: 17, cy: 12, cr: 13, kx: 37, ky: 16, ffx: 44, ffy: 0, fbx: -22, fby: 0)
+    static let leap   = Pose(hx: -22, hy: 30, hr: 14, cx: 18, cy: 33, cr: 15, kx: 35, ky: 51, ffx: 40, ffy: 13, fbx: -44, fby: 15)
+    static let held   = Pose(hx: -1, hy: -50, hr: 13, cx: 2, cy: -22, cr: 14, kx: 3, ky: 5, ffx: 6, ffy: -46, fbx: 0, fby: -74)
+
+    func blended(toward o: Pose, by t: CGFloat) -> Pose {
+        Pose(hx: lerp(hx, o.hx, t), hy: lerp(hy, o.hy, t), hr: lerp(hr, o.hr, t),
+             cx: lerp(cx, o.cx, t), cy: lerp(cy, o.cy, t), cr: lerp(cr, o.cr, t),
+             kx: lerp(kx, o.kx, t), ky: lerp(ky, o.ky, t),
+             ffx: lerp(ffx, o.ffx, t), ffy: lerp(ffy, o.ffy, t), fbx: lerp(fbx, o.fbx, t), fby: lerp(fby, o.fby, t))
+    }
+}
+
+enum PoseName { case stand, sit, crouch, lie, bow, leap }
+
+enum LegID: CaseIterable {
+    case nf, ff, nb, fb   // near/far, front/back
+    var front: Bool { self == .nf || self == .ff }
+    var near: Bool { self == .nf || self == .nb }
+    /// Walk gait (lateral sequence): near-back, near-front, far-back, far-front.
+    var gaitOffset: CGFloat {
+        switch self {
+        case .nb: return 0
+        case .nf: return 0.25
+        case .fb: return 0.5
+        case .ff: return 0.75
+        }
+    }
+}
+
+struct Leg { var anchor: CGPoint; var knee: CGPoint; var foot: CGPoint }
+
+struct Skeleton {
+    var p: Pose
+    var legs: [LegID: Leg]
+    var shoulder: CGPoint
+}
+
+/// Two-bone IK. The joint bends backwards, like a cat's wrist and hock.
+func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat) -> CGPoint {
+    let dx = b.x - a.x, dy = b.y - a.y
+    let d = max(hypot(dx, dy), 0.001)
+    if d >= l1 + l2 - 0.01 {
+        return CGPoint(x: a.x + dx * l1 / (l1 + l2), y: a.y + dy * l1 / (l1 + l2))
+    }
+    let ux = dx / d, uy = dy / d
+    let along = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+    let h = sqrt(max(0, l1 * l1 - along * along))
+    let nx = -uy, ny = ux
+    let s: CGFloat = nx > 0 ? -1 : 1
+    return CGPoint(x: a.x + ux * along + nx * h * s, y: a.y + uy * along + ny * h * s)
+}
+
+// MARK: - Behaviour types
+
+enum Act {
+    case inBox, leaving, air, land, pin, sit, look, groom, yawn, stretch, loaf, sleep
+    case wander, watch, approach, stalk, swat, petted, startle, goHome, held
+
+    var label: String {
+        switch self {
+        case .inBox: return "In the box"
+        case .leaving: return "Jumping out"
+        case .air: return "In the air"
+        case .land: return "Landing"
+        case .pin: return "Got it!"
+        case .sit: return "Sitting"
+        case .look: return "Looking around"
+        case .groom: return "Grooming"
+        case .yawn: return "Yawning"
+        case .stretch: return "Stretching"
+        case .loaf: return "Loafing"
+        case .sleep: return "Asleep"
+        case .wander: return "Exploring"
+        case .watch: return "Watching your pointer"
+        case .approach: return "Creeping closer"
+        case .stalk: return "Stalking"
+        case .swat: return "Batting at it"
+        case .petted: return "Being petted"
+        case .startle: return "Startled!"
+        case .goHome: return "Heading home"
+        case .held: return "Picked up"
+        }
+    }
+}
+
+enum Landing { case land, pin, box }
+
+/// Scratch state for the current activity.
+struct ActData {
+    var dur: CGFloat = 0
+    var next: CGFloat = 0
+    var lookX: CGFloat = 0
+    var lookY: CGFloat = 0
+    var x: CGFloat = 0
+    var tiltSign: CGFloat = 1
+    var wiggle: CGFloat = 0
+    var ready = false
+    var wait: CGFloat = 0
+    var left = 0
+    var bored: CGFloat = 90
+    var fromBox = false
+    var landY: CGFloat = 0
+    var then: Landing = .land
+    var peek = Spring(1, f: 3, z: 0.55)
+    var peekValue: CGFloat = 1
+    var stir: CGFloat = 0
+    var prep: CGFloat = 0
+}
+
+struct Swat { var t: CGFloat = 0; var target: CGPoint; var jumps: Int }
+
+struct Heart { var x: CGFloat; var y: CGFloat; var age: CGFloat }
+
+struct Perception {
+    var head: CGPoint
+    var dH: CGFloat
+    var idle: CGFloat
+    var moving: Bool
+    var near: Bool
+    var startle: Bool
+}
+
+// MARK: - Simulation
+
+final class CatSim {
+    static let gravity: CGFloat = 2400
+    static let tailCount = 10
+
+    /// Overall size (Settings → Size). Cat-local units are multiplied by this on the way to the screen.
+    var scale: CGFloat = 1
+    var boxW: CGFloat { 120 * scale }
+    var boxRim: CGFloat { 90 * scale }
+    var tailSegment: CGFloat { 6.2 * scale }
+    /// How readily it plays (Settings → Personality); playfulness drifts back to this after play.
+    var playfulBase: CGFloat = 0.7
+
+    // World, set by the controller each frame
+    var floorY: CGFloat = 0
+    var minX: CGFloat = 0
+    var maxX: CGFloat = 1000
+    var box = CGPoint.zero                       // bottom-left of the box body
+    var boxShow = Spring(1, f: 4.2, z: 0.42)
+    var roams = true
+    /// Seconds before the cat leaves the box on its own.
+    var roamDelay: ClosedRange<CGFloat> = 90...240
+
+    // Pointer
+    var ptrX: CGFloat = 0, ptrY: CGFloat = 0
+    var ptrVX: CGFloat = 0, ptrVY: CGFloat = 0
+    var ptrSpeed: CGFloat = 0
+    var ptrLastMove: CGFloat = 0
+
+    // Body
+    var pos = CGPoint.zero
+    var velX: CGFloat = 0, velY: CGFloat = 0
+    var air = false, held = false
+    var gait: CGFloat = 0, speed: CGFloat = 0, breath: CGFloat = 0, time: CGFloat = 0
+    var sit = Spring(1, f: 3, z: 0.8), crouch = Spring(0, f: 3.2, z: 0.75), lie = Spring(0, f: 1.6, z: 0.9)
+    var bow = Spring(0, f: 2.2, z: 0.7), leap = Spring(0, f: 5, z: 0.7), hold = Spring(0, f: 4, z: 0.6)
+    var squash = Spring(1, f: 4.5, z: 0.32), lean = Spring(0, f: 4, z: 0.6)
+    var facing = Spring(1, f: 5, z: 0.85), headFacing = Spring(1, f: 7, z: 0.8), swing = Spring(0, f: 1.4, z: 0.12)
+    var tilt = Spring(0, f: 3, z: 0.45), pitch = Spring(0, f: 4, z: 0.7)
+    var gx = Spring(0, f: 9, z: 0.85), gy = Spring(0, f: 9, z: 0.85)
+    var open = Spring(1, f: 14, z: 1), dil = Spring(0.3, f: 4, z: 0.9), happy = Spring(0, f: 5, z: 0.9), yawn = Spring(0, f: 3, z: 0.8)
+    var earL = Spring(0, f: 6, z: 0.35), earR = Spring(0, f: 6, z: 0.35)
+    var paw = Spring(0, f: 8, z: 0.55), pawX = Spring(30, f: 11, z: 0.45), pawY = Spring(30, f: 11, z: 0.45), rim = Spring(0, f: 5, z: 0.7)
+    var groom = Spring(0, f: 3, z: 0.8), wiggle = Spring(0, f: 4, z: 0.8), purr = Spring(0, f: 3, z: 1)
+    var tailBase = Spring(-1.0, f: 2.2, z: 0.6), tailCurl = Spring(0.36, f: 2, z: 0.6), tailAmp = Spring(0.1, f: 2, z: 0.8)
+    var tailFreq: CGFloat = 1.6
+    var tailPuff = Spring(1, f: 5, z: 0.5)
+    var tailPhase: CGFloat = 0
+    var tail: [CGPoint] = []
+    var blinkAt: CGFloat = 0, blinkT: CGFloat = -1
+    var sleeping = false
+    /// World y below which the body is hidden (inside the box).
+    var boxClip: CGFloat?
+
+    // Brain
+    var act: Act = .inBox
+    var t: CGFloat = 0
+    var d = ActData()
+    var interest: CGFloat = 0, playful: CGFloat = 0.7, outSince: CGFloat = 0
+    var petTime: CGFloat = 0, lastPet: CGFloat = -9, noticed = false
+    var duckUntil: CGFloat = 0, happyUntil: CGFloat = 0
+    var swat: Swat?
+    var hearts: [Heart] = []
+    var zzz: CGFloat = 0
+
+    var isHome: Bool { act == .inBox || act == .leaving }
+    private var committed: Bool {
+        if swat != nil { return true }
+        switch act {
+        case .leaving, .air, .held, .startle, .land, .pin: return true
+        default: return false
+        }
+    }
+
+    // MARK: Setup
+
+    func boot(pointer: CGPoint) {
+        ptrX = pointer.x; ptrY = pointer.y
+        go(.inBox, ActData(next: CGFloat.random(in: roamDelay) * 0.5))
+        d.peek = Spring(0.95, f: 3, z: 0.55)
+        placeInBox(0.95)
+        initTail()
+    }
+
+    // MARK: Skeleton
+
+    func skeleton() -> Skeleton {
+        let ws: [(Pose, CGFloat)] = [(.sit, clamp01(sit.x)), (.crouch, clamp01(crouch.x)), (.lie, clamp01(lie.x)),
+                                     (.bow, clamp01(bow.x)), (.leap, clamp01(leap.x)), (.held, clamp01(hold.x))]
+        var p = Pose.stand
+        for (pose, w) in ws { p = p.blended(toward: pose, by: w) }
+        // breathing, butt wiggle
+        let br = sin(breath)
+        p.cr *= 1 + 0.03 * br; p.cy += 0.6 * br; p.ky += 0.5 * br
+        p.hx += sin(time * 15) * 2.4 * wiggle.x
+        // walk: body bob + planted feet
+        let moving = clamp01(speed / 90) * (1 - clamp01(sit.x)) * (1 - clamp01(lie.x)) * (1 - clamp01(leap.x)) * (1 - clamp01(hold.x))
+        let stride = 14 + 10 * clamp01(speed / 260)
+        let bob = moving * 1.6 * cos(gait * .pi * 4)
+        p.hy += bob; p.cy += bob; p.ky += bob * 0.6
+        var feet: [LegID: CGPoint] = [:]
+        for leg in LegID.allCases {
+            var x = (leg.front ? p.ffx : p.fbx) + (leg.near ? 3 : -3)
+            var y = leg.front ? p.ffy : p.fby
+            if moving > 0 {
+                let ph = (gait + leg.gaitOffset).truncatingRemainder(dividingBy: 1)
+                var dx: CGFloat, lift: CGFloat = 0
+                if ph < 0.6 {
+                    dx = lerp(stride / 2, -stride / 2, ph / 0.6)
+                } else {
+                    let u = (ph - 0.6) / 0.4
+                    dx = lerp(-stride / 2, stride / 2, smoothstep(u))
+                    lift = sin(.pi * u) * 6
+                }
+                x += dx * moving; y += lift * moving
+            }
+            feet[leg] = CGPoint(x: x, y: y)
+        }
+        let shoulder = CGPoint(x: p.cx + 2, y: p.cy - p.cr * 0.45)
+        let hipJoint = CGPoint(x: p.hx + 2, y: p.hy - p.hr * 0.35)
+        // paws hooked over the box rim
+        let rimY = boxClip.map { ($0 - pos.y) / scale } ?? 0
+        let r = clamp01(rim.x)
+        if r > 0, let nf = feet[.nf], let ff = feet[.ff] {
+            feet[.nf] = CGPoint(x: lerp(nf.x, p.cx + 14, r), y: lerp(nf.y, rimY + 2, r))
+            feet[.ff] = CGPoint(x: lerp(ff.x, p.cx - 8, r), y: lerp(ff.y, rimY + 2, r))
+        }
+        // grooming / swatting paw
+        let g = clamp01(groom.x), pw = clamp01(paw.x)
+        if g > 0, let nf = feet[.nf] { feet[.nf] = CGPoint(x: lerp(nf.x, p.kx + 4, g), y: lerp(nf.y, p.ky - 14, g)) }
+        if pw > 0, let nf = feet[.nf] { feet[.nf] = CGPoint(x: lerp(nf.x, pawX.x, pw), y: lerp(nf.y, pawY.x, pw)) }
+        var legs: [LegID: Leg] = [:]
+        for leg in LegID.allCases {
+            let a = leg.front ? shoulder : hipJoint
+            let l1: CGFloat = leg.front ? 13 : 14, l2: CGFloat = leg.front ? 14 : 15
+            var f = feet[leg] ?? a
+            let dist = hypot(f.x - a.x, f.y - a.y), maxLen = l1 + l2
+            if dist > maxLen { f = CGPoint(x: a.x + (f.x - a.x) * maxLen / dist, y: a.y + (f.y - a.y) * maxLen / dist) }
+            legs[leg] = Leg(anchor: a, knee: solveIK(a, f, l1, l2), foot: f)
+        }
+        return Skeleton(p: p, legs: legs, shoulder: shoulder)
+    }
+
+    /// Facing spring -> x scale. Passes quickly through a narrow minimum instead of going paper-thin.
+    func turnScale(_ f: CGFloat, _ minimum: CGFloat) -> CGFloat {
+        (f >= 0 ? 1 : -1) * (minimum + (1 - minimum) * min(1, abs(f)))
+    }
+
+    /// Cat-local point -> world (applies facing, squash and lean around the root).
+    func toWorld(_ lx: CGFloat, _ ly: CGFloat) -> CGPoint {
+        let sy = squash.x, sx = 1 + (1 - sy) * 0.7, f = turnScale(facing.x, 0.35)
+        let x = lx * f * sx * scale, y = ly * sy * scale
+        let a = lean.x + swing.x, c = cos(a), s = sin(a)
+        let purrShake = purr.x * sin(time * 90) * 0.35
+        return CGPoint(x: pos.x + x * c - y * s + purrShake, y: pos.y + x * s + y * c)
+    }
+
+    func toLocal(_ wx: CGFloat, _ wy: CGFloat) -> CGPoint {
+        CGPoint(x: (wx - pos.x) / (turnScale(facing.x, 0.35) * scale), y: (wy - pos.y) / scale)
+    }
+
+    func headWorld() -> CGPoint {
+        let s = skeleton()
+        return toWorld(s.p.kx, s.p.ky)
+    }
+
+    // MARK: Tail
+
+    private func tailRoot(_ sk: Skeleton) -> CGPoint { toWorld(sk.p.hx - sk.p.hr * 0.8, sk.p.hy + sk.p.hr * 0.2) }
+
+    func initTail() {
+        let r = tailRoot(skeleton())
+        let f = sgn(facing.x) == 0 ? 1 : sgn(facing.x)
+        tail = (0..<Self.tailCount).map { i in CGPoint(x: r.x - CGFloat(i) * tailSegment * f, y: r.y + CGFloat(i) * 2) }
+    }
+
+    /// A chain that chases a mood-driven shape, so it lags behind the body and settles on its own.
+    private func stepTail(_ dt: CGFloat, _ sk: Skeleton) {
+        if tail.count != Self.tailCount { initTail() }
+        let root = tailRoot(sk)
+        tailPhase += dt * tailFreq * .pi * 2
+        let f = sgn(facing.x) == 0 ? 1 : sgn(facing.x)
+        var ang = tailBase.x, x = root.x, y = root.y
+        tail[0] = root
+        for i in 1..<Self.tailCount {
+            let u = CGFloat(i) / CGFloat(Self.tailCount)
+            ang += tailCurl.x * u + tailAmp.x * u * sin(tailPhase - CGFloat(i) * 0.55) * 1.4
+            let tx = x - cos(ang) * f * tailSegment, ty = y + sin(ang) * tailSegment
+            var p = tail[i]
+            let k = 1 - exp(-dt * lerp(26, 9, u))
+            p.x += (tx - p.x) * k; p.y += (ty - p.y) * k
+            let prev = tail[i - 1]
+            let ddx = p.x - prev.x, ddy = p.y - prev.y, dd = max(hypot(ddx, ddy), 1)
+            p = CGPoint(x: prev.x + ddx / dd * tailSegment, y: prev.y + ddy / dd * tailSegment)
+            if boxClip == nil && !held { p.y = max(p.y, floorY + 3.5 * scale) }   // rests on the floor
+            tail[i] = p
+            x = p.x; y = p.y
+        }
+    }
+
+    // MARK: Frame
+
+    func step(_ dt: CGFloat, pointer raw: CGPoint) {
+        time += dt
+        trackPointer(raw, dt)
+        think(dt)
+        speed = air ? 0 : abs(velX)
+        gait += speed * dt * 0.6 / (14 + 10 * clamp01(speed / 260))
+        breath += dt * (sleeping ? 1.6 : 2.6)
+        if blinkT >= 0 {
+            blinkT += dt
+            if blinkT > 0.16 { blinkT = -1 }
+        }
+        stepSprings(dt)
+        boxShow.step(dt)
+        if !isHome && !held { pos.x = clamp(pos.x, minX, maxX) }
+        stepTail(dt, skeleton())
+        for i in hearts.indices {
+            hearts[i].age += dt
+            hearts[i].y += 22 * dt
+            hearts[i].x += sin(hearts[i].age * 6 + hearts[i].y) * 0.25
+        }
+        hearts.removeAll { $0.age >= 1.4 }
+    }
+
+    private func stepSprings(_ dt: CGFloat) {
+        sit.step(dt); crouch.step(dt); lie.step(dt); bow.step(dt); leap.step(dt); hold.step(dt)
+        squash.step(dt); lean.step(dt); facing.step(dt); headFacing.step(dt); swing.step(dt)
+        tilt.step(dt); pitch.step(dt); gx.step(dt); gy.step(dt)
+        open.step(dt); dil.step(dt); happy.step(dt); yawn.step(dt); earL.step(dt); earR.step(dt)
+        paw.step(dt); pawX.step(dt); pawY.step(dt); rim.step(dt)
+        groom.step(dt); wiggle.step(dt); purr.step(dt)
+        tailBase.step(dt); tailCurl.step(dt); tailAmp.step(dt); tailPuff.step(dt)
+    }
+
+    private func trackPointer(_ raw: CGPoint, _ dt: CGFloat) {
+        let dx = raw.x - ptrX, dy = raw.y - ptrY
+        if abs(dx) + abs(dy) > 0.5 { ptrLastMove = time }
+        if dt > 0 {
+            let k = min(1, dt * 14)
+            ptrVX += (dx / dt - ptrVX) * k
+            ptrVY += (dy / dt - ptrVY) * k
+        }
+        ptrX = raw.x; ptrY = raw.y
+        ptrSpeed = hypot(ptrVX, ptrVY)
+    }
+
+    // MARK: Helpers
+
+    private func go(_ a: Act, _ data: ActData = ActData()) {
+        act = a; t = 0; d = data
+        if a != .inBox { sleeping = a == .sleep }
+    }
+
+    private func pose(_ name: PoseName) {
+        sit.target = name == .sit ? 1 : 0
+        crouch.target = name == .crouch ? 1 : 0
+        lie.target = name == .lie ? 1 : 0
+        bow.target = name == .bow ? 1 : 0
+        leap.target = name == .leap ? 1 : 0
+        hold.target = 0
+    }
+
+    private func faceTo(_ x: CGFloat, _ minimum: CGFloat = 6) {
+        let dx = x - pos.x
+        if abs(dx) > minimum { facing.target = sgn(dx) }
+    }
+
+    private func lookAt(_ wx: CGFloat, _ wy: CGFloat) {
+        let h = headWorld(), dx = wx - h.x, dy = wy - h.y
+        let dist = max(hypot(dx, dy), 1), r = min(1, dist / 110)
+        gx.target = dx / dist * r; gy.target = dy / dist * r
+        pitch.target = clamp(atan2(dy, abs(dx)) * 0.35, -0.3, 0.45)
+        if abs(dx) > 12 { headFacing.target = sgn(dx) }
+    }
+
+    private func lookForward() {
+        gx.target = 0.25 * sgn(facing.target); gy.target = -0.05; pitch.target = 0
+        headFacing.target = sgn(facing.target)
+    }
+
+    private enum Mood { case relaxed, walk, happy, hunt, alert, scared, sleep, box }
+
+    /// Tail shape per mood: (base angle, curl, sway, sway speed, puff).
+    /// Angles are measured from straight back (0); up is positive, down negative. Curl bends each
+    /// segment a little more, so a drooping base with positive curl makes the relaxed "J" shape.
+    private func mood(_ m: Mood) {
+        let v: (CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
+        switch m {
+        case .relaxed: v = (-1.0, 0.36, 0.1, 1.2, 1)
+        case .walk: v = (0.15, 0.3, 0.12, 2.2, 1)
+        case .happy: v = (1.2, 0.14, 0.08, 1.6, 1)
+        case .hunt: v = (-0.3, 0.05, 0.07, 7, 1)
+        case .alert: v = (-0.15, 0.3, 0.05, 3, 1)
+        case .scared: v = (1.0, 0.25, 0.04, 2, 1.9)
+        case .sleep: v = (-1.35, -0.42, 0, 1, 1)
+        case .box: v = (-0.6, 0.35, 0.1, 1.4, 1)
+        }
+        tailBase.target = v.0; tailCurl.target = v.1; tailAmp.target = v.2; tailFreq = v.3; tailPuff.target = v.4
+    }
+
+    @discardableResult
+    private func moveToward(_ x: CGFloat, _ maxSpeed: CGFloat, _ dt: CGFloat, _ stopAt: CGFloat = 4) -> Bool {
+        let dx = x - pos.x
+        let want = clamp(dx * 3, -maxSpeed, maxSpeed) * (abs(dx) < stopAt ? 0 : 1)
+        let accel = 700 * dt
+        velX += clamp(want - velX, -accel, accel)
+        pos.x += velX * dt
+        if abs(velX) > 8 { facing.target = sgn(velX) }
+        return abs(dx) < stopAt + 1 && abs(velX) < 15
+    }
+
+    private func brake(_ dt: CGFloat) {
+        let a = 900 * dt
+        velX -= clamp(velX, -a, a)
+        pos.x += velX * dt
+    }
+
+    /// Ballistic jump to (tx, ty) peaking `apex` above the higher end.
+    private func launch(_ tx: CGFloat, _ ty: CGFloat, _ apex: CGFloat, _ then: Landing) {
+        let g = Self.gravity, top = max(pos.y, ty) + apex
+        let up = sqrt(2 * g * (top - pos.y)), tUp = up / g, tDown = sqrt(2 * (top - ty) / g)
+        velX = (tx - pos.x) / (tUp + tDown); velY = up; air = true
+        squash.v += 6; squash.x = 1.18
+        if abs(tx - pos.x) > 4 { facing.target = sgn(tx - pos.x) }
+        go(.air, ActData(landY: ty, then: then))
+    }
+
+    private func emitHeart() {
+        let h = headWorld()
+        hearts.append(Heart(x: h.x + rnd(-12, 12) * scale, y: h.y + 26 * scale, age: 0))
+        if hearts.count > 8 { hearts.removeFirst() }
+    }
+
+    private func blinkMaybe() {
+        if time > blinkAt {
+            blinkT = 0
+            blinkAt = time + rnd(2.2, 6) * (chance(0.2) ? 0.15 : 1)
+        }
+    }
+
+    private func earTwitch() {
+        if chance(0.5) { earL.v += rnd(10, 16) } else { earR.v += rnd(10, 16) }
+    }
+
+    private func startSwat(_ target: CGPoint, jumps: Int = 1) {
+        swat = Swat(target: target, jumps: jumps)
+    }
+
+    private func updateSwat(_ dt: CGFloat) {
+        guard var s = swat else { return }
+        s.t += dt
+        let sh = skeleton().shoulder
+        if s.t < 0.14 {            // wind up: paw cocked beside the face
+            paw.target = 1; pawX.target = sh.x + 8; pawY.target = sh.y + 24
+            earL.target = -0.15; earR.target = -0.15
+        } else if s.t < 0.32 {     // strike towards the pointer
+            let l = toLocal(s.target.x, s.target.y)
+            let ang = clamp(atan2(l.y - sh.y, max(4, l.x - sh.x)), -0.6, air ? 1.2 : 0.9)
+            pawX.target = sh.x + cos(ang) * 30; pawY.target = sh.y + sin(ang) * 30
+        } else {
+            paw.target = 0; earL.target = 0; earR.target = 0
+        }
+        swat = s.t > 0.55 ? nil : s
+    }
+
+    // MARK: Perception and decisions
+
+    private func perceive(_ dt: CGFloat) -> Perception {
+        let h = headWorld()
+        let dH = hypot(ptrX - h.x, ptrY - h.y)
+        let idle = time - ptrLastMove, moving = idle < 0.25
+        let near = dH < 260
+        if near && moving && ptrSpeed > 25 && ptrSpeed < 2400 {
+            interest = min(1, interest + dt * (1.4 - dH / 260))
+        } else {
+            interest = max(0, interest - dt * 0.3)
+        }
+        let petting = dH < 30 * scale && ptrSpeed > 12 && ptrSpeed < 650 && !air && !held
+        petTime = petting ? petTime + dt : max(0, petTime - dt * 2)
+        if petting { lastPet = time }
+        if !moving || !near { noticed = false }
+        return Perception(head: h, dH: dH, idle: idle, moving: moving, near: near, startle: dH < 150 && ptrSpeed > 2600)
+    }
+
+    private func pick(_ opts: [(Act, CGFloat)]) -> Act {
+        let total = opts.reduce(0) { $0 + max(0, $1.1) }
+        var r = CGFloat.random(in: 0..<max(total, 0.0001))
+        for (a, w) in opts {
+            r -= max(0, w)
+            if r <= 0 { return a }
+        }
+        return opts[0].0
+    }
+
+    private func decideOut(_ per: Perception) -> Act {
+        let lowPtr = ptrY - floorY < 110
+        if interest > 0.35 && per.near {
+            if per.dH < 78 * scale { return pick([(.swat, 45), (.watch, 35), (.groom, 8 * (1 - playful)), (.sit, 10)]) }
+            if lowPtr && abs(ptrX - pos.x) < 420 { return pick([(.stalk, 40 * playful), (.watch, 35), (.approach, 15), (.sit, 10)]) }
+            return pick([(.watch, 55), (.approach, abs(ptrX - pos.x) > 140 ? 25 : 0), (.look, 12)])
+        }
+        if time - outSince > d.bored || (per.idle > 40 && chance(0.4)) {
+            return per.idle > 40 && chance(0.4) ? .loaf : .goHome
+        }
+        return pick([(.sit, 22), (.look, 18), (.wander, 26), (.groom, 12), (.yawn, 7), (.stretch, 7), (.loaf, per.idle > 15 ? 18 : 6)])
+    }
+
+    private func enter(_ a: Act) {
+        var n = ActData(bored: d.bored)
+        switch a {
+        case .sit: n.dur = rnd(2, 5)
+        case .look: n.dur = rnd(2.5, 5); n.next = 0
+        case .groom: n.dur = rnd(2.5, 4.5)
+        case .yawn: n.dur = 1.9
+        case .stretch: n.dur = 1.8
+        case .loaf: n.dur = rnd(6, 12)
+        case .wander: n.x = clamp(pos.x + rnd(150, 420) * (chance(0.5) ? 1 : -1), minX, maxX)
+        case .watch: n.dur = rnd(1.4, 3.2); n.tiltSign = chance(0.5) ? 1 : -1
+        case .approach: n.dur = 4
+        case .stalk: n.dur = 7
+        case .swat:
+            let jumps = chance(0.35) ? 2 : 1
+            startSwat(CGPoint(x: ptrX, y: ptrY), jumps: jumps)
+            n.left = jumps - 1
+        default: break
+        }
+        go(a, n)
+    }
+
+    /// Expressions relax back to neutral every frame unless the current activity holds them.
+    private func relax(_ per: Perception) {
+        yawn.target = 0; groom.target = 0; wiggle.target = 0; purr.target = 0
+        happy.target = time < happyUntil ? 1 : 0
+        tilt.target = 0; earL.target = 0; earR.target = 0; rim.target = 0
+        if swat == nil { paw.target = 0 }
+        open.target = sleeping ? 0 : 1
+        dil.target = 0.25 + 0.4 * clamp01((220 - per.dH) / 200) * (per.near ? 1 : 0)
+    }
+
+    // MARK: Brain
+
+    private func think(_ dt: CGFloat) {
+        let per = perceive(dt)
+        let a = act
+        t += dt
+        relax(per)
+        playful += (playfulBase - playful) * min(1, dt * 0.03)
+        blinkMaybe()
+        if !sleeping && time.truncatingRemainder(dividingBy: 7) < dt && chance(0.5) { earTwitch() }
+
+        // Interrupts
+        if !isHome && !committed && a != .sleep {
+            if per.startle { startle(); return }
+            if petTime > 0.25 && a != .petted {
+                go(.petted, ActData(bored: d.bored))
+            } else if per.near && per.moving && !noticed && [.sit, .look, .wander, .groom, .loaf, .yawn, .stretch].contains(a) {
+                noticed = true
+                if chance(0.35 + 0.55 * playful) { earL.v += 8; earR.v += 8; enter(.watch) }
+            }
+        }
+
+        switch act {
+        case .inBox: inBox(dt, per)
+        case .leaving: leaving(dt)
+        case .air: inAir(dt)
+        case .land:
+            pose(.stand); brake(dt); lean.target = 0
+            if t > 0.35 { enter(decideOut(per)) }
+        case .pin:
+            pose(.crouch); brake(dt); paw.target = 1; pawX.target = 34; pawY.target = 2
+            mood(.hunt); lookAt(ptrX, ptrY)
+            if t > 0.6 { paw.target = 0; playful = max(0.2, playful - 0.1); enter(chance(0.5) ? .sit : .watch) }
+        case .sit:
+            pose(.sit); brake(dt); mood(.relaxed); idleLook(per)
+            if t > d.dur { enter(decideOut(per)) }
+        case .look:
+            pose(.sit); brake(dt); mood(.relaxed)
+            if t > d.next { d.next = t + rnd(0.7, 1.8); d.lookX = pos.x + rnd(-300, 300); d.lookY = floorY + rnd(0, 260) }
+            lookAt(d.lookX, d.lookY)
+            if t > d.dur { enter(decideOut(per)) }
+        case .groom:
+            pose(.sit); brake(dt); mood(.relaxed)
+            groom.target = t > 0.3 && t < d.dur - 0.3 ? 1 : 0
+            pitch.target = -0.35 + sin(t * 9) * 0.06; gx.target = 0.2; gy.target = -0.4
+            open.target = 0.35; headFacing.target = sgn(facing.target)
+            if t > d.dur { enter(decideOut(per)) }
+        case .yawn:
+            pose(.sit); brake(dt); mood(.relaxed)
+            yawn.target = t > 0.2 && t < 1.3 ? 1 : 0
+            open.target = yawn.target > 0 ? 0.08 : 1
+            pitch.target = yawn.target * 0.35; earL.target = yawn.target * 0.35; earR.target = yawn.target * 0.35
+            if t > d.dur { enter(chance(0.4) ? .stretch : decideOut(per)) }
+        case .stretch:
+            pose(t < 1.3 ? .bow : .stand); brake(dt); mood(.happy)
+            open.target = t < 1.3 ? 0.3 : 1
+            if t > d.dur { enter(decideOut(per)) }
+        case .loaf:
+            pose(.lie); brake(dt); mood(.relaxed); open.target = t > 2 ? 0.45 : 1; idleLook(per, 0.4)
+            if per.idle > 25 && t > 4 { go(.sleep, ActData(bored: d.bored)) }
+            else if t > d.dur { enter(decideOut(per)) }
+        case .sleep: sleepTick(dt, per)
+        case .wander:
+            pose(.stand); mood(.walk); lookForward()
+            if moveToward(d.x, 75, dt) { enter(chance(0.6) ? .sit : .look) }
+        case .watch: watch(dt, per)
+        case .approach:
+            pose(.stand); mood(.alert); lookAt(ptrX, ptrY)
+            if moveToward(ptrX - sgn(ptrX - pos.x) * 100, 80, dt, 10) || t > d.dur { enter(.watch) }
+        case .stalk: stalk(dt, per)
+        case .swat:
+            pose(.sit); brake(dt); mood(.hunt); lookAt(ptrX, ptrY); faceTo(ptrX)
+            dil.target = 1
+            if swat == nil {
+                if d.left > 0 { d.left -= 1; startSwat(CGPoint(x: ptrX, y: ptrY)) }
+                else { enter(per.dH < 90 && chance(0.5) ? .watch : .sit) }
+            }
+        case .petted:
+            pose(.sit); brake(dt); mood(.happy)
+            happy.target = 1; purr.target = 1; earL.target = 0.25; earR.target = 0.25
+            lookAt(ptrX, ptrY)
+            if t.truncatingRemainder(dividingBy: 0.7) < dt { emitHeart() }
+            if petTime < 0.05 && time - lastPet > 0.7 { enter(chance(0.5) ? .sit : .groom) }
+            else if t > 5 && chance(dt * 0.25) { enter(.swat) }
+        case .startle:
+            earL.target = 0.9; earR.target = 0.9; mood(.scared); dil.target = 1
+            if !air {
+                brake(dt); pose(.crouch)
+                if t > 1.1 { enter(chance(0.4) ? .goHome : .watch) }
+            } else {
+                stepAir(dt)
+            }
+        case .goHome: goHome(dt)
+        case .held: heldTick()
+        }
+        updateSwat(dt)
+    }
+
+    private func leaving(_ dt: CGFloat) {
+        pose(.sit); rim.target = 0
+        if t < 0.24 {
+            squash.target = 0.8     // anticipation: sink into the box before the jump
+            d.peekValue = lerp(1, 0.7, t / 0.24)
+            placeInBox(d.peekValue)
+        } else {
+            squash.target = 1; boxClip = nil
+            let side: CGFloat = box.x + boxW + 70 < maxX ? 1 : -1
+            outSince = time
+            let bored = rnd(60, 150)
+            // clear the rim comfortably, then drop to the floor beside the box
+            launch(box.x + boxW / 2 + side * (boxW / 2 + 55 * scale), floorY,
+                   box.y + boxRim + 40 * scale - max(pos.y, floorY), .land)
+            d.bored = bored; d.fromBox = true
+        }
+    }
+
+    private func inAir(_ dt: CGFloat) {
+        pose(.leap)
+        velY -= Self.gravity * dt
+        pos.x += velX * dt; pos.y += velY * dt
+        squash.target = 1 + clamp(abs(velY) / 2600, 0, 0.22)
+        lean.target = clamp(velY / 1800, -0.35, 0.35) * (sgn(facing.target) == 0 ? 1 : sgn(facing.target))
+        // stay hidden by the box front while climbing out of it or dropping into it
+        let rimY = box.y + boxRim
+        let overBox = abs(pos.x - (box.x + boxW / 2)) < boxW / 2 + 10
+        let hidden = overBox && ((d.fromBox && pos.y < rimY) || (d.then == .box && velY < 0 && pos.y < rimY + 40 * scale))
+        boxClip = hidden ? rimY : nil
+        if d.fromBox && velY < 0 { boxShow.target = 0 }   // tuck the box away once the cat is out
+        if d.then == .box && velY < 0 && pos.y <= d.landY { landInBox(); return }
+        if pos.y <= floorY && velY < 0 {
+            pos.y = floorY; air = false; velY = 0
+            squash.x = 0.7; squash.v = 0; squash.target = 1; lean.target = 0; leap.target = 0
+            if d.then == .pin { pose(.crouch); go(.pin, ActData(bored: d.bored)) }
+            else { go(.land, ActData(bored: d.bored)) }
+        }
+    }
+
+    private func stepAir(_ dt: CGFloat) {
+        velY -= Self.gravity * dt
+        pos.x += velX * dt; pos.y += velY * dt
+        if pos.y <= floorY { pos.y = floorY; velY = 0; air = false; squash.x = 0.75; leap.target = 0 }
+    }
+
+    private func startle() {
+        swat = nil; paw.target = 0
+        let away: CGFloat = sgn(pos.x - ptrX) == 0 ? 1 : sgn(pos.x - ptrX)
+        velX = away * 220; velY = 520; air = true; squash.x = 1.25; leap.target = 0.6
+        facing.target = -away; tailPuff.target = 1.9
+        go(.startle, ActData(bored: d.bored))
+    }
+
+    private func idleLook(_ per: Perception, _ amount: CGFloat = 1) {
+        if per.near && per.moving && interest > 0.2 {
+            lookAt(ptrX, ptrY)
+        } else if t.truncatingRemainder(dividingBy: 2.2) < 0.02 {
+            gx.target = rnd(-0.6, 0.6) * amount; gy.target = rnd(-0.3, 0.4) * amount; pitch.target = rnd(-0.1, 0.2)
+        }
+    }
+
+    private func watch(_ dt: CGFloat, _ per: Perception) {
+        let low = ptrY - floorY < 60
+        pose(low && playful > 0.5 ? .crouch : .sit); crouch.target *= 0.6
+        brake(dt); mood(.hunt); lookAt(ptrX, ptrY); faceTo(ptrX, 30)
+        dil.target = 0.85
+        // head tilt when the pointer pauses: the classic curious cat
+        tilt.target = per.idle > 0.35 && per.idle < 3 && per.dH < 260 ? 0.32 * d.tiltSign : 0
+        if t > d.dur {
+            if !per.near || interest < 0.1 { enter(chance(0.5) ? .sit : .groom) }
+            else { enter(decideOut(per)) }
+        }
+    }
+
+    private func stalk(_ dt: CGFloat, _ per: Perception) {
+        let dx = ptrX - pos.x
+        pose(.crouch); mood(.hunt); lookAt(ptrX, ptrY); dil.target = 1
+        earL.target = -0.1; earR.target = -0.1
+        if abs(dx) > 130 && !d.ready {
+            moveToward(ptrX - sgn(dx) * 120, 38, dt, 6); d.wiggle = 0
+        } else {
+            brake(dt); faceTo(ptrX); d.ready = true
+            d.wiggle += dt; wiggle.target = d.wiggle > 0.3 ? 1 : 0
+            if d.wait == 0 { d.wait = rnd(0.9, 1.4) }
+            if d.wiggle > d.wait {
+                wiggle.target = 0; squash.x = 0.82; earL.target = 0; earR.target = 0
+                let tx = clamp(ptrX, minX, maxX), ty = max(floorY, ptrY - 22)
+                launch(tx - sgn(dx) * 10, floorY, max(25, ty - floorY + 10), .pin)
+                playful = max(0.25, playful - 0.08)
+                return
+            }
+        }
+        if ptrSpeed > 900 || t > d.dur || !per.near { wiggle.target = 0; enter(.watch) }
+    }
+
+    private func sleepTick(_ dt: CGFloat, _ per: Perception) {
+        pose(.lie); brake(dt); mood(.sleep); sleeping = true
+        open.target = 0; gx.target = 0; gy.target = 0; pitch.target = -0.12
+        zzz += dt
+        if per.near && per.moving {
+            d.stir += dt
+            if d.stir > 0.05 && d.stir - dt <= 0.05 { earTwitch() }
+            if d.stir > 1.2 { sleeping = false; open.target = 1; enter(.yawn) }
+        } else {
+            d.stir = max(0, d.stir - dt * 0.5)
+        }
+    }
+
+    private func goHome(_ dt: CGFloat) {
+        boxShow.target = 1
+        let cx = box.x + boxW / 2, onFloor = box.y - floorY < 10
+        let side: CGFloat = sgn(pos.x - cx) == 0 ? 1 : sgn(pos.x - cx)
+        let spot = onFloor ? cx + side * (boxW / 2 + 34 * scale) : cx + side * 30 * scale
+        pose(.stand); mood(.walk); lookForward()
+        if t < 0.5 { brake(dt); lookAt(cx, box.y + boxRim); return }
+        if moveToward(spot, 120, dt, 5) {
+            faceTo(cx, 1)
+            d.prep += dt; squash.target = 0.8; pose(.crouch); crouch.target = 0.5
+            if d.prep > 0.22 { squash.target = 1; launch(cx, box.y + boxRim - 30 * scale, 34, .box) }
+        }
+    }
+
+    private func landInBox() {
+        air = false; velX = 0; velY = 0; leap.target = 0; lean.target = 0
+        facing.target = sgn(facing.target) == 0 ? 1 : sgn(facing.target)
+        squash.x = 0.8; squash.target = 1
+        pose(.sit); sit.snap(1); crouch.snap(0); leap.snap(0)
+        var n = ActData(next: time + CGFloat.random(in: roamDelay))
+        n.peek = Spring(0, f: 3, z: 0.55)
+        n.peek.target = 1
+        go(.inBox, n)
+    }
+
+    func placeInBox(_ peek: CGFloat) {
+        let rimY = box.y + boxRim
+        pos.x = box.x + boxW / 2
+        pos.y = rimY + (lerp(-98, -40, clamp01(peek)) + max(0, peek - 1) * 60) * scale
+        boxClip = rimY
+    }
+
+    private func inBox(_ dt: CGFloat, _ per: Perception) {
+        pose(.sit); mood(.box); boxShow.target = 1
+        let sleepy = per.idle > 40
+        sleeping = sleepy && !per.near
+        var peek: CGFloat = sleepy ? 0.62 : 0.95
+        if per.near && per.moving && per.dH < 230 { peek = 1.12 }
+        if per.startle || (ptrSpeed > 2400 && per.dH < 170) { duckUntil = time + 1.3 }
+        if swat != nil { peek = 1.25 }                 // rise up to bat over the rim
+        if time < duckUntil { peek = 0 }
+        d.peek.target = peek
+        d.peek.step(dt)
+        placeInBox(d.peek.x)
+        rim.target = d.peek.x > 0.85 && !sleepy ? 1 : 0
+        open.target = sleeping ? 0 : 1
+        if (per.near && interest > 0.15) || per.dH < 160 {
+            lookAt(ptrX, ptrY)
+        } else if t.truncatingRemainder(dividingBy: 2.6) < dt {
+            gx.target = rnd(-0.7, 0.7); gy.target = rnd(-0.2, 0.4); headFacing.target = chance(0.5) ? 1 : -1
+        }
+        tilt.target = per.idle > 0.4 && per.idle < 3 && per.dH < 200 ? 0.28 : 0
+        // petting in the box
+        if petTime > 0.25 {
+            happy.target = 1; purr.target = 1
+            if t.truncatingRemainder(dividingBy: 0.7) < dt { emitHeart() }
+        }
+        // batting from the box
+        if swat == nil && per.dH < 75 * scale && per.dH > 30 * scale && per.moving && ptrSpeed < 1500 && d.peek.x > 0.9 && chance(dt * 1.6) {
+            startSwat(CGPoint(x: ptrX, y: ptrY))
+        }
+        if swat != nil { rim.target = 0 }
+        if roams && time > d.next && !sleepy && petTime == 0 { letOut() }
+    }
+
+    private func heldTick() {
+        pose(.stand); hold.target = 1; sit.target = 0
+        earL.target = 0.5; earR.target = 0.5; mood(.scared); tailPuff.target = 1
+        tailBase.target = -1.45; tailCurl.target = 0.08   // hangs down
+        open.target = 1; dil.target = 1
+        lookAt(ptrX + facing.x * 40, ptrY - 80)
+        swing.target = clamp(-ptrVX / 2200, -0.5, 0.5)
+        pos = CGPoint(x: ptrX, y: ptrY - 8 * scale)
+        boxShow.target = 1
+    }
+
+    // MARK: Commands from the app
+
+    func letOut() {
+        guard act == .inBox else { return }
+        rim.target = 0; swat = nil; paw.target = 0; happy.target = 0; purr.target = 0
+        go(.leaving, ActData(peekValue: d.peek.x))
+    }
+
+    func callHome() {
+        if isHome || act == .goHome || act == .air || act == .held { return }
+        sleeping = false
+        go(.goHome)
+    }
+
+    func clickCat() {
+        if act == .inBox { letOut(); return }
+        if committed { return }
+        if act == .sleep { sleeping = false; enter(.yawn); return }
+        emitHeart()
+        happyUntil = time + 0.6
+    }
+
+    func pickUp() {
+        if act == .leaving { return }
+        boxClip = nil; rim.snap(0); air = false; held = true; sleeping = false
+        swat = nil; paw.target = 0; happy.target = 0; purr.target = 0
+        facing.target = sgn(facing.x) == 0 ? 1 : sgn(facing.x)
+        go(.held)
+    }
+
+    func release() {
+        held = false; hold.target = 0; swing.target = 0; earL.target = 0; earR.target = 0
+        let overBox = ptrX > box.x - 10 && ptrX < box.x + boxW + 10 && ptrY > box.y && ptrY < box.y + boxRim + 120
+        air = true
+        if overBox {
+            velX = 0; velY = 0
+            go(.air, ActData(landY: box.y + boxRim - 30 * scale, then: .box))
+        } else {
+            velX = clamp(ptrVX * 0.5, -500, 500); velY = clamp(ptrVY * 0.3, -200, 400)
+            boxShow.target = 0
+            outSince = time
+            go(.air, ActData(bored: rnd(60, 150), then: .land))
+            d.landY = floorY
+        }
+    }
+
+    var statusLabel: String {
+        if act == .inBox && sleeping { return "Dozing in the box" }
+        if act == .inBox && happy.target > 0 { return "Being petted" }
+        return act.label
+    }
+}

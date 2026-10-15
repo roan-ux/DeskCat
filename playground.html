@@ -1,0 +1,1092 @@
+<title>DeskCat Playground</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* Layout: a pretend Mac desktop as the hero stage, a narrow control rail beside it, install steps below. */
+  :root {
+    --bg: #f6f5f0;
+    --surface: #ffffff;
+    --fg: #1f1f1f;
+    --muted: #63615a;
+    --line: #e2dfd4;
+    --box: #fffa6b;
+    --box-ink: #1f1f1f;
+    --focus: #1f1f1f;
+    --font-ui: "Onest", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --surface: #201f1c; --fg: #f1efe8; --muted: #a8a59a; --line: #34322d; --focus: #fffa6b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161614; --surface: #201f1c; --fg: #f1efe8; --muted: #a8a59a; --line: #34322d; --focus: #fffa6b;
+    color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 15px; line-height: 1.5;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 28px 48px;
+  }
+  .wrap { max-width: 1160px; margin: 0 auto; display: grid; gap: 28px; }
+  header { display: grid; gap: 6px; }
+  h1 { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+  h1 mark { background: var(--box); color: var(--box-ink); padding: 0 6px; }
+  header p { margin: 0; color: var(--muted); max-width: 64ch; }
+  .play { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .play { grid-template-columns: minmax(0, 1fr); } }
+  .stage { position: relative; width: 100%; height: clamp(440px, 64vh, 620px); border-radius: 12px; overflow: hidden;
+           border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none; }
+  .stage canvas { display: block; width: 100%; height: 100%; }
+  .rail { display: grid; gap: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .status { display: grid; gap: 6px; }
+  .chip { justify-self: start; display: inline-flex; align-items: center; gap: 8px; background: var(--box); color: var(--box-ink);
+          font-weight: 600; padding: 5px 12px; border-radius: 999px; font-size: 14px; }
+  .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--box-ink); }
+  .field { display: grid; gap: 6px; }
+  input[type="text"] { font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--fg); background: var(--fg); color: var(--bg); cursor: pointer; }
+  label.check { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .try { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .try li { display: grid; gap: 1px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .try li:last-child { border-bottom: 0; padding-bottom: 0; }
+  .try b { font-weight: 600; }
+  .try span { color: var(--muted); font-size: 14px; }
+  .install { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  @media (max-width: 760px) { .install { grid-template-columns: minmax(0, 1fr); } }
+  .install section { display: grid; gap: 10px; align-content: start; min-width: 0; }
+  h2 { font-size: 20px; margin: 0; font-weight: 700; text-wrap: balance; }
+  ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+  code, pre { font-family: var(--font-mono); font-size: 13px; }
+  pre { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  p.note { margin: 0; color: var(--muted); font-size: 14px; max-width: 70ch; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>DeskCat <mark>Playground</mark></h1>
+    <p>A browser copy of the Mac app's cat, running the same animation and behaviour code. The area below is a pretend desktop. Move your pointer around it, slowly at first.</p>
+  </header>
+
+  <div class="play">
+    <div class="stage" id="stage"><canvas id="desk" aria-label="Pretend desktop with the cat in its box"></canvas></div>
+
+    <aside class="rail">
+      <div class="status">
+        <span class="label">Cat is</span>
+        <span class="chip"><i></i><span id="statusText">In the box</span></span>
+      </div>
+      <div class="field">
+        <label class="label" for="catName">Name on the box</label>
+        <input type="text" id="catName" maxlength="20" value="Mochi" autocomplete="off">
+      </div>
+      <div class="row">
+        <button type="button" id="toggleOut">Let it out</button>
+        <label class="check"><input type="checkbox" id="roam" checked> Wander on its own</label>
+      </div>
+      <div class="field">
+        <span class="label">Things to try</span>
+        <ul class="try">
+          <li><b>Wiggle the pointer near the box</b><span>It rises up, paws on the rim. Get close and it bats at you.</span></li>
+          <li><b>Hover gently over its head</b><span>Petting. Eyes close happily and it purrs.</span></li>
+          <li><b>Click the cat</b><span>It crouches, then jumps out. The box tucks away.</span></li>
+          <li><b>Move slowly along the floor near it</b><span>Sometimes it stalks, wiggles and pounces. Sometimes it just watches.</span></li>
+          <li><b>Hold the pointer just above its head</b><span>It may swat at it, or jump up to catch it.</span></li>
+          <li><b>Swipe fast right next to it</b><span>It startles and hops away.</span></li>
+          <li><b>Drag the cat</b><span>Pick it up by the scruff. The box appears; drop it in.</span></li>
+          <li><b>Leave it alone</b><span>It grooms, yawns, stretches, loafs, and falls asleep.</span></li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <div class="install">
+    <section>
+      <h2>Run the real app on your Mac</h2>
+      <ol>
+        <li>Install Apple's command line tools once: <code>xcode-select --install</code></li>
+        <li>Download the code and run it:</li>
+      </ol>
+      <pre>git clone -b claude/intelligent-noether-dt656x \
+  https://github.com/skailama/roan-forclaudeweb.git
+cd roan-forclaudeweb/desk-cat
+swift run</pre>
+      <p class="note">To keep it as a normal app, run <code>./scripts/make-app.sh</code> and drag <code>build/DeskCat.app</code> into Applications.</p>
+    </section>
+    <section>
+      <h2>Or download a ready-made build</h2>
+      <ol>
+        <li>On GitHub, open the repo's <b>Actions</b> tab and pick the latest <b>DeskCat macOS build</b> run.</li>
+        <li>Under <b>Artifacts</b>, download <b>DeskCat-app</b> and unzip it (twice).</li>
+        <li>The app isn't signed with an Apple Developer ID yet, so clear the download flag once:</li>
+      </ol>
+      <pre>xattr -dr com.apple.quarantine ~/Downloads/DeskCat.app
+open ~/Downloads/DeskCat.app</pre>
+    </section>
+  </div>
+  <p class="note">In this preview the cat wanders out sooner than on the Mac, so you get to see it.</p>
+</div>
+
+<script>
+(() => {
+  // =====================================================================
+  //  Math + springs
+  // =====================================================================
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  const clamp01 = (v) => clamp(v, 0, 1);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const chance = (p) => Math.random() < p;
+  const smooth = (t) => t * t * (3 - 2 * t);
+
+  /** Damped spring: `f` is how fast (Hz), `z` how bouncy (1 = no overshoot, 0.3 = wobbly). */
+  class Spring {
+    constructor(x, f, z) { this.x = x; this.v = 0; this.target = x; this.f = f; this.z = z; }
+    step(dt) {
+      const w = 2 * Math.PI * this.f, k = w * w, c = 2 * this.z * w;
+      const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+      for (let i = 0; i < n; i++) { this.v += (k * (this.target - this.x) - c * this.v) * h; this.x += this.v * h; }
+    }
+    snap(x) { this.x = x; this.target = x; this.v = 0; }
+  }
+
+  // =====================================================================
+  //  Rig: pose keyframes (cat-local units, facing right, root = ground under the body)
+  // =====================================================================
+  // h = hips, c = chest (centre + radius), k = head centre, ff/fb = front/back foot x,y
+  const POSES = {
+    stand:  { hx: -20, hy: 27, hr: 14, cx: 16, cy: 29, cr: 15, kx: 33, ky: 50, ffx: 18, ffy: 0, fbx: -21, fby: 0 },
+    sit:    { hx: -11, hy: 15, hr: 17, cx: 5,  cy: 36, cr: 14, kx: 10, ky: 63, ffx: 10, ffy: 0, fbx: 3,   fby: 0 },
+    crouch: { hx: -21, hy: 23, hr: 14, cx: 15, cy: 15, cr: 14, kx: 33, ky: 22, ffx: 24, ffy: 0, fbx: -17, fby: 0 },
+    lie:    { hx: -16, hy: 13, hr: 14, cx: 13, cy: 13, cr: 14, kx: 31, ky: 27, ffx: 30, ffy: 1, fbx: -6,  fby: 1 },
+    bow:    { hx: -20, hy: 31, hr: 14, cx: 17, cy: 12, cr: 13, kx: 37, ky: 16, ffx: 44, ffy: 0, fbx: -22, fby: 0 },
+    leap:   { hx: -22, hy: 30, hr: 14, cx: 18, cy: 33, cr: 15, kx: 35, ky: 51, ffx: 40, ffy: 13, fbx: -44, fby: 15 },
+    held:   { hx: -1,  hy: -50, hr: 13, cx: 2, cy: -22, cr: 14, kx: 3,  ky: 5,  ffx: 6,  ffy: -46, fbx: 0, fby: -74 },
+  };
+  const KEYS = Object.keys(POSES.stand);
+  const LEG = { f1: 13, f2: 14, b1: 14, b2: 15 };
+  // Walk gait (lateral sequence): near-back, near-front, far-back, far-front.
+  const GAIT = { nb: 0, nf: 0.25, fb: 0.5, ff: 0.75 };
+
+  function ik(a, b, l1, l2) {
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.001;
+    if (d >= l1 + l2 - 0.01) return { x: a.x + dx * l1 / (l1 + l2), y: a.y + dy * l1 / (l1 + l2) };
+    const ux = dx / d, uy = dy / d, along = (l1 * l1 - l2 * l2 + d * d) / (2 * d);
+    const h = Math.sqrt(Math.max(0, l1 * l1 - along * along));
+    // Joint bends backwards (towards -x), like a cat's wrist and hock.
+    const nx = -uy, ny = ux, s = nx > 0 ? -1 : 1;
+    return { x: a.x + ux * along + nx * h * s, y: a.y + uy * along + ny * h * s };
+  }
+
+  // =====================================================================
+  //  The cat: physical state, expressive springs, and a skeleton built from them
+  // =====================================================================
+  const cat = {
+    pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 }, air: false, held: false,
+    gait: 0, speed: 0, breath: 0, time: 0,
+    // pose blend weights
+    sit: new Spring(1, 3, 0.8), crouch: new Spring(0, 3.2, 0.75), lie: new Spring(0, 1.6, 0.9),
+    bow: new Spring(0, 2.2, 0.7), leap: new Spring(0, 5, 0.7), hold: new Spring(0, 4, 0.6),
+    // squash & stretch (1 = rest), lean, facing
+    squash: new Spring(1, 4.5, 0.32), lean: new Spring(0, 4, 0.6),
+    facing: new Spring(1, 5, 0.85), headFacing: new Spring(1, 7, 0.8), swing: new Spring(0, 1.4, 0.12),
+    // head + face
+    tilt: new Spring(0, 3, 0.45), pitch: new Spring(0, 4, 0.7), gx: new Spring(0, 9, 0.85), gy: new Spring(0, 9, 0.85),
+    open: new Spring(1, 14, 1), dil: new Spring(0.3, 4, 0.9), happy: new Spring(0, 5, 0.9), yawn: new Spring(0, 3, 0.8),
+    earL: new Spring(0, 6, 0.35), earR: new Spring(0, 6, 0.35),
+    // front paw (swatting / grooming), paws-on-rim
+    paw: new Spring(0, 8, 0.55), pawX: new Spring(30, 11, 0.45), pawY: new Spring(30, 11, 0.45), rim: new Spring(0, 5, 0.7),
+    groom: new Spring(0, 3, 0.8), wiggle: new Spring(0, 4, 0.8), purr: new Spring(0, 3, 1),
+    // tail mood
+    tailBase: new Spring(-1.0, 2.2, 0.6), tailCurl: new Spring(0.36, 2, 0.6), tailAmp: new Spring(0.1, 2, 0.8),
+    tailFreq: 1.6, tailPuff: new Spring(1, 5, 0.5), tailPhase: 0,
+    tail: [], blinkAt: 0, blinkT: -1, sleeping: false,
+    boxClip: null,   // world y below which the body is hidden (inside the box)
+  };
+  const SPRINGS = Object.keys(cat).filter((k) => cat[k] instanceof Spring);
+
+  function skeleton() {
+    const w = { sit: clamp01(cat.sit.x), crouch: clamp01(cat.crouch.x), lie: clamp01(cat.lie.x),
+                bow: clamp01(cat.bow.x), leap: clamp01(cat.leap.x), held: clamp01(cat.hold.x) };
+    const p = {};
+    for (const k of KEYS) {
+      let v = POSES.stand[k];
+      for (const name of ["sit", "crouch", "lie", "bow", "leap", "held"]) v = lerp(v, POSES[name][k], w[name]);
+      p[k] = v;
+    }
+    // breathing, butt wiggle
+    const br = Math.sin(cat.breath);
+    p.cr *= 1 + 0.03 * br; p.cy += 0.6 * br; p.ky += 0.5 * br;
+    p.hx += Math.sin(cat.time * 15) * 2.4 * cat.wiggle.x;
+    // walk: body bob + planted feet
+    const moving = clamp01(cat.speed / 90) * (1 - w.sit) * (1 - w.lie) * (1 - w.leap) * (1 - w.held);
+    const stride = 14 + 10 * clamp01(cat.speed / 260);
+    const bob = moving * 1.6 * Math.cos(cat.gait * Math.PI * 4);
+    p.hy += bob; p.cy += bob; p.ky += bob * 0.6;
+    const feet = {};
+    for (const leg of ["nf", "ff", "nb", "fb"]) {
+      const front = leg[1] === "f", near = leg[0] === "n";
+      let x = (front ? p.ffx : p.fbx) + (near ? 3 : -3), y = front ? p.ffy : p.fby;
+      if (moving > 0) {
+        const ph = (cat.gait + GAIT[leg]) % 1;
+        let dx, lift = 0;
+        if (ph < 0.6) dx = lerp(stride / 2, -stride / 2, ph / 0.6);
+        else { const u = (ph - 0.6) / 0.4; dx = lerp(-stride / 2, stride / 2, smooth(u)); lift = Math.sin(Math.PI * u) * 6; }
+        x += dx * moving; y += lift * moving;
+      }
+      feet[leg] = { x, y };
+    }
+    const shoulder = { x: p.cx + 2, y: p.cy - p.cr * 0.45 }, hipJ = { x: p.hx + 2, y: p.hy - p.hr * 0.35 };
+    // paws hooked over the box rim
+    const rimY = cat.boxClip != null ? cat.boxClip - cat.pos.y : 0, r = clamp01(cat.rim.x);
+    if (r > 0) {
+      feet.nf = { x: lerp(feet.nf.x, p.cx + 14, r), y: lerp(feet.nf.y, rimY + 2, r) };
+      feet.ff = { x: lerp(feet.ff.x, p.cx - 8, r), y: lerp(feet.ff.y, rimY + 2, r) };
+    }
+    // grooming / swatting paw
+    const g = clamp01(cat.groom.x), pw = clamp01(cat.paw.x);
+    if (g > 0) feet.nf = { x: lerp(feet.nf.x, p.kx + 4, g), y: lerp(feet.nf.y, p.ky - 14, g) };
+    if (pw > 0) feet.nf = { x: lerp(feet.nf.x, cat.pawX.x, pw), y: lerp(feet.nf.y, cat.pawY.x, pw) };
+    const legs = {};
+    for (const leg of ["nf", "ff", "nb", "fb"]) {
+      const front = leg[1] === "f", a = front ? shoulder : hipJ;
+      const l1 = front ? LEG.f1 : LEG.b1, l2 = front ? LEG.f2 : LEG.b2;
+      let f = feet[leg];
+      const d = Math.hypot(f.x - a.x, f.y - a.y), max = l1 + l2;
+      if (d > max) f = { x: a.x + (f.x - a.x) * max / d, y: a.y + (f.y - a.y) * max / d };
+      legs[leg] = { a, k: ik(a, f, l1, l2), f };
+    }
+    return { p, legs, shoulder };
+  }
+
+  /** Cat-local point -> world (applies facing, squash and lean around the root). */
+  function toWorld(lx, ly) {
+    const sy = cat.squash.x, sx = 1 + (1 - sy) * 0.7, f = turnScale(cat.facing.x, 0.35);
+    let x = lx * f * sx, y = ly * sy;
+    const a = cat.lean.x + cat.swing.x, c = Math.cos(a), s = Math.sin(a);
+    const purr = cat.purr.x * Math.sin(cat.time * 90) * 0.35;
+    return { x: cat.pos.x + x * c - y * s + purr, y: cat.pos.y + x * s + y * c };
+  }
+  /** Facing spring -> x scale. Passes quickly through a narrow minimum instead of going paper-thin. */
+  function turnScale(f, min) { const s = f >= 0 ? 1 : -1; return s * (min + (1 - min) * Math.min(1, Math.abs(f))); }
+  function toLocal(wx, wy) {
+    return { x: (wx - cat.pos.x) / turnScale(cat.facing.x, 0.35), y: wy - cat.pos.y };
+  }
+  function headWorld() { const s = skeleton(); return toWorld(s.p.kx, s.p.ky); }
+
+  // ---- tail: a chain that chases a mood-driven shape, so it lags and swings on its own ----
+  const TAIL_N = 10, TAIL_SEG = 6.2;
+  function tailRoot(sk) { return toWorld(sk.p.hx - sk.p.hr * 0.8, sk.p.hy + sk.p.hr * 0.2); }
+  function initTail() {
+    const r = tailRoot(skeleton());
+    cat.tail = Array.from({ length: TAIL_N }, (_, i) => ({ x: r.x - i * TAIL_SEG * Math.sign(cat.facing.x || 1), y: r.y + i * 2 }));
+  }
+  function stepTail(dt, sk) {
+    const root = tailRoot(sk);
+    cat.tailPhase += dt * cat.tailFreq * Math.PI * 2;
+    const f = Math.sign(cat.facing.x) || 1;
+    let ang = cat.tailBase.x, x = root.x, y = root.y;
+    cat.tail[0] = { x, y };
+    for (let i = 1; i < TAIL_N; i++) {
+      const u = i / TAIL_N;
+      ang += cat.tailCurl.x * u + cat.tailAmp.x * u * Math.sin(cat.tailPhase - i * 0.55) * 1.4;
+      // angle measured from "straight back"; mirrored by facing
+      const dx = -Math.cos(ang) * f, dy = Math.sin(ang);
+      const tx = x + dx * TAIL_SEG, ty = y + dy * TAIL_SEG;
+      const p = cat.tail[i], k = 1 - Math.exp(-dt * lerp(26, 9, u));
+      p.x += (tx - p.x) * k; p.y += (ty - p.y) * k;
+      // keep segment length
+      const prev = cat.tail[i - 1], ddx = p.x - prev.x, ddy = p.y - prev.y, d = Math.hypot(ddx, ddy) || 1;
+      p.x = prev.x + ddx / d * TAIL_SEG; p.y = prev.y + ddy / d * TAIL_SEG;
+      if (cat.boxClip == null && !cat.held) p.y = Math.max(p.y, floorY() + 3.5);   // rests on the floor
+      x = p.x; y = p.y;
+    }
+  }
+
+  // =====================================================================
+  //  World: desktop, box, pointer
+  // =====================================================================
+  const canvas = document.getElementById("desk"), stage = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  let W = 800, H = 500, dpr = 1;
+  const MENU_BAR = 26;
+  const BOX = { w: 120, h: 90, rim: 90 };
+  const box = { x: 0, y: 0, show: new Spring(1, 4.2, 0.42) };
+  let catName = "Mochi", roams = true;
+
+  const ptr = { x: 300, y: 200, vx: 0, vy: 0, speed: 0, lastMove: 0, raw: { x: 300, y: 200 }, inside: false };
+  const floorY = () => 0;
+  const bounds = () => ({ minX: 50, maxX: W - 50 });
+
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    W = Math.max(300, r.width); H = Math.max(300, r.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    box.x = clamp(box.x, 20, W - BOX.w - 20); box.y = clamp(box.y, 0, H - MENU_BAR - 200);
+  }
+
+  // =====================================================================
+  //  Brain: activities chosen from mood, the pointer, and a little randomness
+  // =====================================================================
+  const brain = { act: "inBox", t: 0, d: {}, interest: 0, playful: 0.7, energy: 1, outSince: 0, nextRoam: 0,
+                  petTime: 0, lastPet: -9, noticed: false, duckUntil: 0, swat: null, hearts: [], zzz: 0 };
+  const LABELS = { inBox: "In the box", leaving: "Jumping out", air: "In the air", land: "Landing", sit: "Sitting",
+    look: "Looking around", groom: "Grooming", yawn: "Yawning", stretch: "Stretching", loaf: "Loafing", sleep: "Asleep",
+    wander: "Exploring", watch: "Watching your pointer", approach: "Creeping closer", stalk: "Stalking",
+    pounce: "Pouncing", pin: "Got it!", swat: "Batting at it", petted: "Being petted", startle: "Startled!",
+    goHome: "Heading home", enterBox: "Hopping in", held: "Picked up" };
+
+  function go(act, d = {}) { brain.act = act; brain.t = 0; brain.d = d; if (act !== "inBox") cat.sleeping = act === "sleep"; }
+  const isHome = () => ["inBox", "leaving"].includes(brain.act);
+  const committed = () => ["leaving", "air", "pounce", "enterBox", "held", "startle", "land", "pin"].includes(brain.act) || brain.swat;
+
+  // ---- shared pose helpers ----
+  function pose(name) {
+    const w = { sit: 0, crouch: 0, lie: 0, bow: 0, leap: 0 };
+    if (name !== "stand") w[name] = 1;
+    for (const k in w) cat[k].target = w[k];
+    cat.hold.target = 0;
+  }
+  function faceTo(x, min = 6) { const d = x - cat.pos.x; if (Math.abs(d) > min) cat.facing.target = Math.sign(d); }
+  function lookAt(wx, wy) {
+    const h = headWorld(), dx = wx - h.x, dy = wy - h.y, d = Math.hypot(dx, dy) || 1, r = Math.min(1, d / 110);
+    cat.gx.target = dx / d * r; cat.gy.target = dy / d * r;
+    cat.pitch.target = clamp(Math.atan2(dy, Math.abs(dx)) * 0.35, -0.3, 0.45);
+    if (cat.headFacing && Math.abs(dx) > 12) cat.headFacing.target = Math.sign(dx);
+  }
+  function lookForward() { cat.gx.target = 0.25 * Math.sign(cat.facing.target); cat.gy.target = -0.05; cat.pitch.target = 0; cat.headFacing.target = Math.sign(cat.facing.target); }
+  function mood(kind) {
+    // Tail shape per mood: [base angle, curl, sway, sway speed, puff].
+    // Angles are measured from straight back (0); up is positive, down negative. Curl bends each
+    // segment a little more, so a drooping base with positive curl makes the relaxed "J" shape.
+    const M = {
+      relaxed: [-1.0, 0.36, 0.1, 1.2, 1], walk: [0.15, 0.3, 0.12, 2.2, 1], happy: [1.2, 0.14, 0.08, 1.6, 1],
+      hunt: [-0.3, 0.05, 0.07, 7, 1], alert: [-0.15, 0.3, 0.05, 3, 1], scared: [1.0, 0.25, 0.04, 2, 1.9],
+      sleep: [-1.35, -0.42, 0, 1, 1], box: [-0.6, 0.35, 0.1, 1.4, 1],
+    }[kind];
+    cat.tailBase.target = M[0]; cat.tailCurl.target = M[1]; cat.tailAmp.target = M[2]; cat.tailFreq = M[3]; cat.tailPuff.target = M[4];
+  }
+  function moveToward(x, maxSpeed, dt, stopAt = 4) {
+    const dx = x - cat.pos.x, want = clamp(dx * 3, -maxSpeed, maxSpeed) * (Math.abs(dx) < stopAt ? 0 : 1);
+    const accel = 700 * dt;
+    cat.vel.x += clamp(want - cat.vel.x, -accel, accel);
+    cat.pos.x += cat.vel.x * dt;
+    if (Math.abs(cat.vel.x) > 8) cat.facing.target = Math.sign(cat.vel.x);
+    return Math.abs(dx) < stopAt + 1 && Math.abs(cat.vel.x) < 15;
+  }
+  function brake(dt) { const a = 900 * dt; cat.vel.x -= clamp(cat.vel.x, -a, a); cat.pos.x += cat.vel.x * dt; }
+
+  /** Ballistic jump to (tx, ty) peaking `apex` above the higher end. */
+  function launch(tx, ty, apex, then) {
+    const g = 2400, top = Math.max(cat.pos.y, ty) + apex;
+    const up = Math.sqrt(2 * g * (top - cat.pos.y)), tUp = up / g, tDown = Math.sqrt(2 * (top - ty) / g);
+    cat.vel.x = (tx - cat.pos.x) / (tUp + tDown); cat.vel.y = up; cat.air = true;
+    cat.squash.v += 6; cat.squash.x = 1.18;
+    if (Math.abs(tx - cat.pos.x) > 4) cat.facing.target = Math.sign(tx - cat.pos.x);
+    go("air", { landY: ty, then });
+  }
+
+  function emitHeart() {
+    const h = headWorld();
+    brain.hearts.push({ x: h.x + rand(-12, 12), y: h.y + 26, age: 0 });
+    if (brain.hearts.length > 8) brain.hearts.shift();
+  }
+  function blinkMaybe() {
+    if (cat.time > cat.blinkAt) { cat.blinkT = 0; cat.blinkAt = cat.time + rand(2.2, 6) * (chance(0.2) ? 0.15 : 1); }
+  }
+  function earTwitch() { const e = chance(0.5) ? cat.earL : cat.earR; e.v += rand(10, 16); }
+
+  function startSwat(target, jumps) {
+    brain.swat = { t: 0, target, jumps };
+  }
+  function updateSwat(dt) {
+    const s = brain.swat; if (!s) return;
+    s.t += dt;
+    const sk = skeleton(), sh = sk.shoulder;
+    if (s.t < 0.14) {           // wind up: paw cocked back
+      cat.paw.target = 1; cat.pawX.target = sh.x + 8; cat.pawY.target = sh.y + 24;
+      cat.earL.target = cat.earR.target = -0.15;
+    } else if (s.t < 0.32) {    // strike towards the pointer
+      const l = toLocal(s.target.x, s.target.y);
+      const ang = clamp(Math.atan2(l.y - sh.y, Math.max(4, l.x - sh.x)), -0.6, cat.air ? 1.2 : 0.9);
+      cat.pawX.target = sh.x + Math.cos(ang) * 30; cat.pawY.target = sh.y + Math.sin(ang) * 30;
+    } else {
+      cat.paw.target = 0; cat.earL.target = cat.earR.target = 0;
+      if (s.t > 0.55) brain.swat = null;
+    }
+  }
+
+  // ---- perception, every frame ----
+  function perceive(dt) {
+    const h = headWorld();
+    const dH = Math.hypot(ptr.x - h.x, ptr.y - h.y);
+    const idle = cat.time - ptr.lastMove, moving = idle < 0.25;
+    const near = dH < 260 && ptr.inside;
+    if (near && moving && ptr.speed > 25 && ptr.speed < 2400) brain.interest = Math.min(1, brain.interest + dt * (1.4 - dH / 260));
+    else brain.interest = Math.max(0, brain.interest - dt * 0.3);
+    const petting = dH < 30 && ptr.inside && ptr.speed > 12 && ptr.speed < 650 && !cat.air && !cat.held;
+    brain.petTime = petting ? brain.petTime + dt : Math.max(0, brain.petTime - dt * 2);
+    if (petting) brain.lastPet = cat.time;
+    if (!moving || !near) brain.noticed = false;
+    return { h, dH, idle, moving, near, startle: dH < 150 && ptr.speed > 2600 && ptr.inside };
+  }
+
+  // ---- decisions ----
+  function decideOut(per) {
+    const { dH } = per;
+    const lowPtr = ptr.y - floorY() < 110;
+    if (brain.interest > 0.35 && per.near) {
+      if (dH < 78) return pick([["swat", 45], ["watch", 35], ["groom", 8 * (1 - brain.playful)], ["sit", 10]]);
+      if (lowPtr && Math.abs(ptr.x - cat.pos.x) < 420) return pick([["stalk", 40 * brain.playful], ["watch", 35], ["approach", 15], ["sit", 10]]);
+      return pick([["watch", 55], ["approach", Math.abs(ptr.x - cat.pos.x) > 140 ? 25 : 0], ["look", 12]]);
+    }
+    const outFor = cat.time - brain.outSince;
+    if (outFor > brain.d.bored || (per.idle > 40 && chance(0.4))) return per.idle > 40 && chance(0.4) ? "loaf" : "goHome";
+    return pick([["sit", 22], ["look", 18], ["wander", 26], ["groom", 12], ["yawn", 7], ["stretch", 7], ["loaf", per.idle > 15 ? 18 : 6]]);
+  }
+  function pick(opts) {
+    const total = opts.reduce((s, o) => s + Math.max(0, o[1]), 0);
+    let r = Math.random() * total;
+    for (const [n, w] of opts) { r -= Math.max(0, w); if (r <= 0) return n; }
+    return opts[0][0];
+  }
+  function enter(act) {
+    const d = { bored: brain.d.bored };
+    switch (act) {
+      case "sit": d.dur = rand(2, 5); break;
+      case "look": d.dur = rand(2.5, 5); d.next = 0; break;
+      case "groom": d.dur = rand(2.5, 4.5); break;
+      case "yawn": d.dur = 1.9; break;
+      case "stretch": d.dur = 1.8; break;
+      case "loaf": d.dur = rand(6, 12); break;
+      case "wander": { const b = bounds(); d.x = clamp(cat.pos.x + rand(150, 420) * (chance(0.5) ? 1 : -1), b.minX, b.maxX); break; }
+      case "watch": d.dur = rand(1.4, 3.2); d.tilt = chance(0.5) ? 1 : -1; break;
+      case "approach": d.dur = 4; break;
+      case "stalk": d.dur = 7; d.wiggle = 0; break;
+      case "swat": startSwat({ x: ptr.x, y: ptr.y }, chance(0.35) ? 2 : 1); d.left = brain.swat.jumps - 1; break;
+    }
+    go(act, d);
+  }
+
+  /** Expressions relax back to neutral every frame unless the current activity holds them. */
+  function relax(per) {
+    cat.yawn.target = 0; cat.groom.target = 0; cat.wiggle.target = 0; cat.purr.target = 0;
+    cat.happy.target = cat.time < (brain.happyUntil || 0) ? 1 : 0;
+    cat.tilt.target = 0; cat.earL.target = 0; cat.earR.target = 0; cat.rim.target = 0;
+    if (!brain.swat) cat.paw.target = 0;
+    cat.open.target = cat.sleeping ? 0 : 1;
+    cat.dil.target = 0.25 + 0.4 * clamp01((220 - per.dH) / 200) * (per.near ? 1 : 0);
+  }
+
+  // ---- the per-frame brain ----
+  function think(dt) {
+    const per = perceive(dt);
+    const a = brain.act, d = brain.d;
+    brain.t += dt;
+    relax(per);
+    blinkMaybe();
+    if (!cat.sleeping && cat.time % 7 < dt && chance(0.5)) earTwitch();
+
+    // interrupts
+    if (!isHome() && !committed() && a !== "sleep") {
+      if (per.startle) { startle(); return; }
+      if (brain.petTime > 0.25 && a !== "petted") { go("petted", { bored: d.bored }); }
+      else if (per.near && per.moving && !brain.noticed && ["sit", "look", "wander", "groom", "loaf", "yawn", "stretch"].includes(a)) {
+        brain.noticed = true;
+        if (chance(0.35 + 0.55 * brain.playful)) { cat.earL.v += 8; cat.earR.v += 8; enter("watch"); }
+      }
+    }
+
+    switch (brain.act) {
+      case "inBox": inBox(dt, per); break;
+      case "leaving": {
+        pose("sit"); cat.rim.target = 0;
+        if (brain.t < 0.24) { cat.squash.target = 0.8; d.peek = lerp(1, 0.7, brain.t / 0.24); placeInBox(d.peek); }
+        else {
+          cat.squash.target = 1; cat.boxClip = null;
+          const side = box.x + BOX.w + 70 < bounds().maxX ? 1 : -1;
+          brain.outSince = cat.time;
+          const bored = rand(45, 110);
+          // clear the rim comfortably, then drop to the floor beside the box
+          launch(box.x + BOX.w / 2 + side * (BOX.w / 2 + 55), floorY(), box.y + BOX.rim + 40 - Math.max(cat.pos.y, floorY()), "land");
+          brain.d.bored = bored; brain.d.fromBox = true;
+        }
+        break;
+      }
+      case "air": {
+        pose("leap"); cat.leap.target = 1;
+        cat.vel.y -= 2400 * dt;
+        cat.pos.x += cat.vel.x * dt; cat.pos.y += cat.vel.y * dt;
+        cat.squash.target = 1 + clamp(Math.abs(cat.vel.y) / 2600, 0, 0.22);
+        cat.lean.target = clamp(cat.vel.y / 1800, -0.35, 0.35) * Math.sign(cat.facing.target || 1);
+        // stay hidden by the box front while climbing out of it / dropping into it
+        const rim = box.y + BOX.rim, overBox = Math.abs(cat.pos.x - (box.x + BOX.w / 2)) < BOX.w / 2 + 10;
+        cat.boxClip = overBox && ((d.fromBox && cat.pos.y < rim) || (d.then === "box" && cat.vel.y < 0 && cat.pos.y < rim + 40)) ? rim : null;
+        if (d.fromBox && cat.vel.y < 0) box.show.target = 0;   // tuck the box away once the cat is out
+        if (d.then === "box" && cat.vel.y < 0 && cat.pos.y <= d.landY) { landInBox(); break; }
+        if (cat.pos.y <= floorY() && cat.vel.y < 0) {
+          cat.pos.y = floorY(); cat.air = false; cat.vel.y = 0;
+          cat.squash.x = 0.7; cat.squash.v = 0; cat.squash.target = 1; cat.lean.target = 0; cat.leap.target = 0;
+          if (d.then === "pin") { pose("crouch"); go("pin", { bored: d.bored }); }
+          else go("land", { bored: d.bored });
+        }
+        break;
+      }
+      case "land": pose("stand"); brake(dt); cat.lean.target = 0; if (brain.t > 0.35) enter(decideOut(per)); break;
+      case "pin": pose("crouch"); brake(dt); cat.paw.target = 1; cat.pawX.target = 34; cat.pawY.target = 2;
+        mood("hunt"); lookAt(ptr.x, ptr.y);
+        if (brain.t > 0.6) { cat.paw.target = 0; brain.playful = Math.max(0.2, brain.playful - 0.1); enter(chance(0.5) ? "sit" : "watch"); }
+        break;
+      case "sit": pose("sit"); brake(dt); mood("relaxed"); idleLook(per);
+        if (brain.t > d.dur) enter(decideOut(per)); break;
+      case "look": pose("sit"); brake(dt); mood("relaxed");
+        if (brain.t > d.next) { d.next = brain.t + rand(0.7, 1.8); d.lx = cat.pos.x + rand(-300, 300); d.ly = rand(0, 260); }
+        lookAt(d.lx, d.ly); cat.tilt.target = 0;
+        if (brain.t > d.dur) enter(decideOut(per)); break;
+      case "groom": pose("sit"); brake(dt); mood("relaxed");
+        cat.groom.target = brain.t > 0.3 && brain.t < d.dur - 0.3 ? 1 : 0;
+        cat.pitch.target = -0.35 + Math.sin(brain.t * 9) * 0.06; cat.gx.target = 0.2; cat.gy.target = -0.4;
+        cat.open.target = 0.35; cat.headFacing.target = Math.sign(cat.facing.target);
+        if (brain.t > d.dur) enter(decideOut(per)); break;
+      case "yawn": pose("sit"); brake(dt); mood("relaxed");
+        cat.yawn.target = brain.t > 0.2 && brain.t < 1.3 ? 1 : 0; cat.open.target = cat.yawn.target ? 0.08 : 1;
+        cat.pitch.target = cat.yawn.target * 0.35; cat.earL.target = cat.earR.target = cat.yawn.target * 0.35;
+        if (brain.t > d.dur) enter(chance(0.4) ? "stretch" : decideOut(per)); break;
+      case "stretch": pose(brain.t < 1.3 ? "bow" : "stand"); brake(dt); mood("happy");
+        cat.open.target = brain.t < 1.3 ? 0.3 : 1;
+        if (brain.t > d.dur) enter(decideOut(per)); break;
+      case "loaf": pose("lie"); brake(dt); mood("relaxed"); cat.open.target = brain.t > 2 ? 0.45 : 1; idleLook(per, 0.4);
+        if (per.idle > 25 && brain.t > 4) { go("sleep", { bored: d.bored }); break; }
+        if (brain.t > d.dur) enter(decideOut(per)); break;
+      case "sleep": sleep(dt, per); break;
+      case "wander": pose("stand"); mood("walk"); lookForward();
+        if (moveToward(d.x, 75, dt)) enter(chance(0.6) ? "sit" : "look"); break;
+      case "watch": watch(dt, per); break;
+      case "approach": pose("stand"); mood("alert"); lookAt(ptr.x, ptr.y);
+        if (moveToward(ptr.x - Math.sign(ptr.x - cat.pos.x) * 100, 80, dt, 10) || brain.t > d.dur) enter("watch");
+        break;
+      case "stalk": stalk(dt, per); break;
+      case "swat": pose("sit"); brake(dt); mood("hunt"); lookAt(ptr.x, ptr.y); faceTo(ptr.x);
+        cat.dil.target = 1;
+        if (!brain.swat) {
+          if (d.left > 0) { d.left--; startSwat({ x: ptr.x, y: ptr.y }); }
+          else enter(per.dH < 90 && chance(0.5) ? "watch" : "sit");
+        }
+        break;
+      case "petted": pose("sit"); brake(dt); mood("happy");
+        cat.happy.target = 1; cat.purr.target = 1; cat.earL.target = cat.earR.target = 0.25;
+        lookAt(ptr.x, ptr.y);
+        if (brain.t % 0.7 < dt) emitHeart();
+        if (brain.petTime < 0.05 && cat.time - brain.lastPet > 0.7) { endPet(); enter(chance(0.5) ? "sit" : "groom"); }
+        else if (brain.t > 5 && chance(dt * 0.25)) { endPet(); enter("swat"); }
+        break;
+      case "startle": cat.earL.target = cat.earR.target = 0.9; mood("scared"); cat.dil.target = 1;
+        if (!cat.air) { brake(dt); pose("crouch"); if (brain.t > 1.1) enter(chance(0.4) ? "goHome" : "watch"); }
+        else stepAir(dt);
+        break;
+      case "goHome": goHome(dt, per); break;
+      case "held": held(dt); break;
+    }
+    updateSwat(dt);
+  }
+
+  function stepAir(dt) {
+    cat.vel.y -= 2400 * dt; cat.pos.x += cat.vel.x * dt; cat.pos.y += cat.vel.y * dt;
+    if (cat.pos.y <= floorY()) { cat.pos.y = floorY(); cat.vel.y = 0; cat.air = false; cat.squash.x = 0.75; cat.leap.target = 0; }
+  }
+  function endPet() { cat.happy.target = 0; cat.purr.target = 0; cat.earL.target = cat.earR.target = 0; }
+  function startle() {
+    endPet(); brain.swat = null; cat.paw.target = 0;
+    const away = Math.sign(cat.pos.x - ptr.x) || 1;
+    cat.vel.x = away * 220; cat.vel.y = 520; cat.air = true; cat.squash.x = 1.25; cat.leap.target = 0.6;
+    cat.facing.target = -away; cat.tailPuff.target = 1.9;
+    go("startle", { bored: brain.d.bored });
+  }
+  function idleLook(per, amount = 1) {
+    if (per.near && per.moving && brain.interest > 0.2) lookAt(ptr.x, ptr.y);
+    else if (brain.t % 2.2 < 0.02) { cat.gx.target = rand(-0.6, 0.6) * amount; cat.gy.target = rand(-0.3, 0.4) * amount; cat.pitch.target = rand(-0.1, 0.2); }
+  }
+  function watch(dt, per) {
+    const low = ptr.y - floorY() < 60;
+    pose(low && brain.playful > 0.5 ? "crouch" : "sit"); cat.crouch.target *= 0.6;
+    brake(dt); mood("hunt"); lookAt(ptr.x, ptr.y); faceTo(ptr.x, 30);
+    cat.dil.target = 0.85;
+    // head tilt when the pointer pauses: the classic curious cat
+    cat.tilt.target = per.idle > 0.35 && per.idle < 3 && per.dH < 260 ? 0.32 * brain.d.tilt : 0;
+    if (brain.t > brain.d.dur) {
+      if (!per.near || brain.interest < 0.1) enter(chance(0.5) ? "sit" : "groom");
+      else enter(decideOut(per));
+    }
+  }
+  function stalk(dt, per) {
+    const d = brain.d, dx = ptr.x - cat.pos.x;
+    pose("crouch"); mood("hunt"); lookAt(ptr.x, ptr.y); cat.dil.target = 1;
+    cat.earL.target = cat.earR.target = -0.1;
+    if (Math.abs(dx) > 130 && !d.ready) { moveToward(ptr.x - Math.sign(dx) * 120, 38, dt, 6); d.wiggle = 0; }
+    else {
+      brake(dt); faceTo(ptr.x); d.ready = true;
+      d.wiggle += dt; cat.wiggle.target = d.wiggle > 0.3 ? 1 : 0;
+      d.wait = d.wait || rand(0.9, 1.4);
+      if (d.wiggle > d.wait) {
+        cat.wiggle.target = 0; cat.squash.x = 0.82; cat.earL.target = cat.earR.target = 0;
+        const tx = clamp(ptr.x, bounds().minX, bounds().maxX), ty = Math.max(floorY(), ptr.y - 22);
+        launch(tx - Math.sign(dx) * 10, floorY(), Math.max(25, ty - floorY() + 10), "pin");
+        brain.playful = Math.max(0.25, brain.playful - 0.08);
+        return;
+      }
+    }
+    if (ptr.speed > 900 || brain.t > d.dur || !per.near) { cat.wiggle.target = 0; enter("watch"); }
+  }
+  function sleep(dt, per) {
+    pose("lie"); brake(dt); mood("sleep"); cat.sleeping = true;
+    cat.open.target = 0; cat.gx.target = 0; cat.gy.target = 0; cat.pitch.target = -0.12;
+    brain.zzz += dt;
+    if (per.near && per.moving) {
+      brain.d.stir = (brain.d.stir || 0) + dt;
+      if (brain.d.stir > 0.05 && brain.d.stir < 0.1) earTwitch();
+      if (brain.d.stir > 1.2) { cat.sleeping = false; cat.open.target = 1; enter("yawn"); }
+    } else brain.d.stir = Math.max(0, (brain.d.stir || 0) - dt * 0.5);
+  }
+  function goHome(dt, per) {
+    box.show.target = 1;
+    const d = brain.d, cx = box.x + BOX.w / 2, onFloor = box.y - floorY() < 10;
+    const side = Math.sign(cat.pos.x - cx) || 1;
+    const spot = onFloor ? cx + side * (BOX.w / 2 + 34) : cx + side * 30;
+    pose("stand"); mood("walk"); lookForward();
+    if (brain.t < 0.5) { brake(dt); lookAt(cx, box.y + BOX.rim); return; }
+    if (moveToward(spot, d.run ? 260 : 120, dt, 5)) {
+      faceTo(cx, 1);
+      d.prep = (d.prep || 0) + dt; cat.squash.target = 0.8; pose("crouch"); cat.crouch.target = 0.5;
+      if (d.prep > 0.22) { cat.squash.target = 1; launch(cx, box.y + BOX.rim - 30, 34, "box"); }
+    }
+  }
+  function landInBox() {
+    cat.air = false; cat.vel.x = cat.vel.y = 0; cat.leap.target = 0; cat.lean.target = 0;
+    cat.facing.target = Math.sign(cat.facing.target) || 1; cat.squash.x = 0.8; cat.squash.target = 1;
+    pose("sit"); cat.sit.snap(1); cat.crouch.snap(0); cat.leap.snap(0);
+    go("inBox", { peek: new Spring(0, 3, 0.55), next: cat.time + rand(30, 60) });
+    brain.d.peek.target = 1;
+  }
+  function placeInBox(peek) {
+    const rim = box.y + BOX.rim;
+    cat.pos.x = box.x + BOX.w / 2;
+    cat.pos.y = rim + lerp(-98, -40, clamp01(peek)) + Math.max(0, peek - 1) * 60;
+    cat.boxClip = rim;
+  }
+  function inBox(dt, per) {
+    const d = brain.d;
+    if (!d.peek) { d.peek = new Spring(1, 3, 0.55); d.next = cat.time + rand(25, 45); }
+    pose("sit"); mood("box"); box.show.target = 1;
+    const sleepy = per.idle > 40;
+    cat.sleeping = sleepy && !per.near;
+    let peek = sleepy ? 0.62 : 0.95;
+    if (per.near && per.moving && per.dH < 230) peek = 1.12;
+    if (per.startle || ptr.speed > 2400 && per.dH < 170) brain.duckUntil = cat.time + 1.3;
+    if (brain.swat) peek = 1.25;                      // rise up to bat over the rim
+    if (cat.time < brain.duckUntil) peek = 0;
+    d.peek.target = peek; d.peek.step(dt);
+    placeInBox(d.peek.x);
+    cat.rim.target = d.peek.x > 0.85 && !sleepy ? 1 : 0;
+    cat.open.target = cat.sleeping ? 0 : 1;
+    if (per.near && brain.interest > 0.15 || per.dH < 160) lookAt(ptr.x, ptr.y);
+    else if (brain.t % 2.6 < dt) { cat.gx.target = rand(-0.7, 0.7); cat.gy.target = rand(-0.2, 0.4); cat.headFacing.target = chance(0.5) ? 1 : -1; }
+    cat.tilt.target = per.idle > 0.4 && per.idle < 3 && per.dH < 200 ? 0.28 : 0;
+    // petting in the box
+    if (brain.petTime > 0.25) { cat.happy.target = 1; cat.purr.target = 1; if (brain.t % 0.7 < dt) emitHeart(); }
+    else { cat.happy.target = 0; cat.purr.target = 0; }
+    // batting from the box
+    if (!brain.swat && per.dH < 75 && per.dH > 30 && per.moving && ptr.speed < 1500 && d.peek.x > 0.9 && chance(dt * 1.6)) {
+      cat.rim.target = 0; startSwat({ x: ptr.x, y: ptr.y });
+    }
+    if (brain.swat) cat.rim.target = 0;
+    if (roams && cat.time > d.next && !sleepy && brain.petTime === 0) letOut();
+  }
+  function held(dt) {
+    pose("stand"); cat.hold.target = 1; cat.sit.target = 0;
+    cat.earL.target = cat.earR.target = 0.5; mood("scared"); cat.tailPuff.target = 1;
+    cat.tailBase.target = -1.45; cat.tailCurl.target = 0.08;   // hangs down
+    cat.open.target = 1; cat.dil.target = 1; lookAt(ptr.x + cat.facing.x * 40, ptr.y - 80);
+    const px = ptr.x, py = ptr.y - 8;
+    cat.swing.target = clamp(-ptr.vx / 2200, -0.5, 0.5);
+    cat.pos.x = px; cat.pos.y = py;
+    box.show.target = 1;
+  }
+  function release() {
+    cat.held = false; cat.hold.target = 0; cat.swing.target = 0; cat.earL.target = cat.earR.target = 0;
+    const overBox = ptr.x > box.x - 10 && ptr.x < box.x + BOX.w + 10 && ptr.y > box.y && ptr.y < box.y + BOX.rim + 120;
+    cat.vel.x = clamp(ptr.vx * 0.5, -500, 500); cat.vel.y = clamp(ptr.vy * 0.3, -200, 400); cat.air = true;
+    if (overBox) { cat.vel.x = 0; cat.vel.y = 0; go("air", { landY: box.y + BOX.rim - 30, then: "box" }); }
+    else { box.show.target = 0; go("air", { landY: floorY(), then: "land", bored: rand(40, 90) }); brain.outSince = cat.time; }
+  }
+  function letOut() {
+    if (brain.act !== "inBox") return;
+    cat.rim.target = 0; brain.swat = null; cat.paw.target = 0; cat.happy.target = 0; cat.purr.target = 0;
+    go("leaving", { peek: brain.d.peek ? brain.d.peek.x : 1 });
+  }
+  function callHome() { if (!isHome() && !["goHome", "air", "held"].includes(brain.act)) { cat.sleeping = false; go("goHome", { run: false }); } }
+
+  // =====================================================================
+  //  Drawing
+  // =====================================================================
+  const INK = "#1d1d1f", INK_FAR = "#2b2b2e", WHITE = "#ffffff", BOXC = "#fff96a", PINK = "#ff8fa3", HEART = "#ff6b8b";
+  function circle(x, y, r, color = INK) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+  function line(a, b, w, color = INK) { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+
+  /** Smooth bean between two circles. */
+  function bean(a, ra, b, rb, back, belly) {
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, nx = -dy / d, ny = dx / d;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, mr = (ra + rb) / 2;
+    ctx.fillStyle = INK; ctx.beginPath();
+    ctx.moveTo(a.x + nx * ra, a.y + ny * ra);
+    ctx.quadraticCurveTo(mx + nx * (mr + back), my + ny * (mr + back), b.x + nx * rb, b.y + ny * rb);
+    ctx.lineTo(b.x - nx * rb, b.y - ny * rb);
+    ctx.quadraticCurveTo(mx - nx * (mr + belly), my - ny * (mr + belly), a.x - nx * ra, a.y - ny * ra);
+    ctx.closePath(); ctx.fill();
+    circle(a.x, a.y, ra); circle(b.x, b.y, rb);
+  }
+  function drawLeg(L, color, outline) {
+    const a = toWorld(L.a.x, L.a.y), k = toWorld(L.k.x, L.k.y), f = toWorld(L.f.x, L.f.y);
+    if (outline) {   // a faint rim so a paw in front of the face still reads
+      line(k, f, 10, outline); ctx.fillStyle = outline; ctx.beginPath(); ctx.ellipse(f.x + 1.5 * Math.sign(cat.facing.x), f.y + 1, 6.6, 5.6, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    line(a, k, 9.5, color); line(k, f, 7.5, color);
+    ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(f.x + 1.5 * Math.sign(cat.facing.x), f.y + 1, 5.2, 4.2, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  function headPath(a, b) {
+    ctx.beginPath();
+    for (let i = 0; i <= 40; i++) {
+      const t = i / 40 * Math.PI * 2, c = Math.cos(t), s = Math.sin(t);
+      const x = a * Math.sign(c) * Math.pow(Math.abs(c), 2 / 2.5) * (s < 0 ? 1.04 : 1);
+      const y = b * Math.sign(s) * Math.pow(Math.abs(s), 2 / 2.5) * (s < 0 ? 0.92 : 1);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  }
+  function ear(base1, base2, tip, rot) {
+    const mx = (base1.x + base2.x) / 2, my = (base1.y + base2.y) / 2;
+    ctx.save(); ctx.translate(mx, my); ctx.rotate(rot); ctx.translate(-mx, -my);
+    ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(base1.x, base1.y);
+    ctx.quadraticCurveTo(lerp(base1.x, tip.x, 0.5) - 2.5, lerp(base1.y, tip.y, 0.5) + 1, tip.x, tip.y);
+    ctx.quadraticCurveTo(lerp(base2.x, tip.x, 0.5) + 1.5, lerp(base2.y, tip.y, 0.5) + 2, base2.x, base2.y);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  function eye(x, y, r, gx, gy) {
+    const open = clamp01(cat.open.x * (blinkAmount())), happy = clamp01(cat.happy.x);
+    ctx.strokeStyle = WHITE; ctx.lineCap = "round"; ctx.lineWidth = 2.2;
+    if (happy > 0.5) {   // ^ ^
+      ctx.beginPath(); ctx.moveTo(x - r * 0.8, y - r * 0.15); ctx.quadraticCurveTo(x, y + r * 0.8, x + r * 0.8, y - r * 0.15); ctx.stroke(); return;
+    }
+    if (open < 0.1) {    // closed, relaxed
+      ctx.beginPath(); ctx.moveTo(x - r * 0.8, y); ctx.quadraticCurveTo(x, y - r * 0.55, x + r * 0.8, y); ctx.stroke(); return;
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(x, y - r * (1 - open) * 0.35, r, r * open, 0, 0, Math.PI * 2);
+    ctx.fillStyle = WHITE; ctx.fill(); ctx.clip();
+    const px = x + gx * r * 0.42, py = y + gy * r * 0.34;
+    const w = r * (0.34 + 0.62 * clamp01(cat.dil.x)), h = r * 1.5;
+    ctx.fillStyle = INK; ctx.beginPath();
+    ctx.moveTo(px, py + h / 2); ctx.quadraticCurveTo(px + w * 1.05, py, px, py - h / 2); ctx.quadraticCurveTo(px - w * 1.05, py, px, py + h / 2); ctx.fill();
+    circle(px + w * 0.28, py + r * 0.3, r * 0.17, WHITE);
+    ctx.restore();
+  }
+  function blinkAmount() {
+    if (cat.blinkT < 0) return 1;
+    const u = cat.blinkT / 0.16;
+    if (u >= 1) { cat.blinkT = -1; return 1; }
+    return 1 - Math.sin(Math.PI * u);
+  }
+  function drawHead(sk) {
+    const p = sk.p, c = toWorld(p.kx, p.ky);
+    const hf = cat.headFacing.x, sy = 1 + (cat.squash.x - 1) * 0.35;
+    ctx.save();
+    ctx.translate(c.x, c.y); ctx.rotate(cat.lean.x + cat.swing.x * 0.5);
+    ctx.scale(turnScale(hf, 0.6), sy);
+    ctx.rotate(cat.tilt.x * 0.9 + cat.pitch.x);
+    // ears (rotate outward/back when flattened)
+    ear({ x: -22, y: 8 }, { x: -7, y: 18 }, { x: -18, y: 34 }, cat.earL.x * 0.9);
+    ear({ x: 6, y: 18 }, { x: 21, y: 9 }, { x: 19, y: 34 }, -cat.earR.x * 0.9);
+    ctx.fillStyle = INK; headPath(25, 21); ctx.fill();
+    // gaze in head space (undo the head's own flip/tilt)
+    const sgn = hf >= 0 ? 1 : -1, a = cat.tilt.x * 0.9 + cat.pitch.x;
+    let gx = cat.gx.x * sgn, gy = cat.gy.x;
+    const rx = gx * Math.cos(a) + gy * Math.sin(a), ry = -gx * Math.sin(a) + gy * Math.cos(a);
+    eye(-6.5, 2, 8, rx, ry); eye(12.5, 2, 8, rx, ry);
+    if (cat.yawn.x > 0.05) {
+      const y = clamp01(cat.yawn.x);
+      ctx.fillStyle = PINK; ctx.beginPath(); ctx.ellipse(4, -10, 4 * y, 6.5 * y, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawTail() {
+    const n = cat.tail.length, puff = cat.tailPuff.x;
+    for (let i = 0; i < n - 1; i++) {
+      const w = lerp(7.5, 4.6, i / (n - 1)) * puff;
+      line(cat.tail[i], cat.tail[i + 1], w);
+    }
+  }
+  function drawCat() {
+    const sk = skeleton(), p = sk.p;
+    if (cat.boxClip == null && !cat.held) {     // shadow shrinks and fades as it leaves the ground
+      const h = Math.max(0, cat.pos.y - floorY()), k = clamp01(1 - h / 220);
+      groundShadow(cat.pos.x, floorY() + 1, 36 * (0.6 + 0.4 * k), 4, 0.2 * k);
+    }
+    ctx.save();
+    if (cat.boxClip != null) { ctx.beginPath(); ctx.rect(-10000, cat.boxClip, 30000, 20000); ctx.clip(); }
+    drawTail();
+    drawLeg(sk.legs.fb, INK_FAR); drawLeg(sk.legs.ff, INK_FAR);
+    const hip = toWorld(p.hx, p.hy), chest = toWorld(p.cx, p.cy), sy = cat.squash.x, sx = 1 + (1 - sy) * 0.7;
+    const back = lerp(-1.5, 2.5, clamp01(cat.crouch.x)), belly = lerp(-2, -4, clamp01(cat.lie.x));
+    bean(hip, p.hr * Math.sqrt(sx * sy), chest, p.cr * Math.sqrt(sx * sy), back, belly);
+    line(chest, toWorld(p.kx, p.ky), 17);   // neck
+    drawLeg(sk.legs.nb, INK);
+    const pawUp = Math.max(cat.paw.x, cat.groom.x) > 0.3;
+    if (!pawUp && (cat.boxClip == null || cat.rim.x < 0.5)) drawLeg(sk.legs.nf, INK);
+    drawHead(sk);
+    if (pawUp) drawLeg(sk.legs.nf, INK, "#4a4a4f");
+    ctx.restore();
+    // paws on the rim are drawn in front of the box, unclipped
+    if (cat.boxClip != null && cat.rim.x >= 0.5) {
+      for (const leg of ["ff", "nf"]) {
+        const f = toWorld(sk.legs[leg].f.x, sk.legs[leg].f.y);
+        ctx.fillStyle = INK; ctx.beginPath(); ctx.ellipse(f.x, f.y, 6.5, 5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = WHITE; ctx.lineWidth = 1.3; ctx.lineCap = "round"; ctx.beginPath();
+        for (const dx of [-2.2, 2.2]) { ctx.moveTo(f.x + dx, f.y - 4.5); ctx.lineTo(f.x + dx, f.y - 1.8); }
+        ctx.stroke();
+      }
+    }
+    if (cat.sleeping) drawZzz(sk);
+  }
+  function drawZzz(sk) {
+    const h = toWorld(sk.p.kx, sk.p.ky);
+    for (let i = 0; i < 3; i++) {
+      const u = ((brain.zzz * 0.45) + i / 3) % 1;
+      ctx.save(); ctx.globalAlpha = Math.sin(Math.PI * u) * 0.85;
+      text("z", h.x + 18 + u * 22 * Math.sign(cat.facing.x || 1), h.y + 22 + u * 34, 10 + u * 8, 700, INK);
+      ctx.restore();
+    }
+  }
+  function text(str, x, y, size, weight, color) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(1, -1);
+    ctx.font = `${weight} ${size}px Onest, "Helvetica Neue", Arial, sans-serif`;
+    ctx.fillStyle = color; ctx.textBaseline = "alphabetic"; ctx.fillText(str, 0, 0); ctx.restore();
+  }
+  /** Soft contact shadow: a few stacked translucent ellipses, a cheap blur. */
+  function groundShadow(x, y, rx, ry, alpha) {
+    if (alpha <= 0.005) return;
+    ctx.fillStyle = "#000";
+    for (let i = 0; i < 4; i++) {
+      const k = 1 + i * 0.22;
+      ctx.globalAlpha = alpha * 0.32;
+      ctx.beginPath(); ctx.ellipse(x, y, rx * k, ry * k, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Cardboard: warm yellow, a top-to-bottom shade, darker flaps, creases, tape and a few scuffs.
+  const CARD = { top: "#f8e86a", bottom: "#e9cf4c", flap: "#e2c645", flapDark: "#d4b73c", scratch: "rgba(122, 92, 18, 0.32)" };
+  function drawBox() {
+    const s = box.show.x;
+    if (s < 0.02) return;
+    const cx = box.x + BOX.w / 2, a = clamp01(s * 3);
+    ctx.save();
+    ctx.translate(cx, box.y);
+    groundShadow(0, 1, 74 * clamp(s, 0, 1.2), 5.5, 0.2 * a);
+    const sxx = clamp(s, 0, 1.3), syy = clamp(s * (1 + (1 - s) * 0.35), 0, 1.4);
+    ctx.scale(sxx, syy); ctx.globalAlpha = a;
+    ctx.translate(-BOX.w / 2, 0);
+    const poly = (pts, fill) => { ctx.fillStyle = fill; ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill(); };
+    const stroke = (pts, color, w) => { ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = "round"; ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke(); };
+    // flaps, shaded darker towards their tips
+    for (const dir of [-1, 1]) {
+      const x0 = dir < 0 ? 0 : 120, tip = x0 + dir * 16;
+      const g = ctx.createLinearGradient(x0, 0, tip, 0);
+      g.addColorStop(0, CARD.flap); g.addColorStop(1, CARD.flapDark);
+      poly([[x0, 90], [tip, 62], [x0, 62]], g);
+    }
+    // front face
+    const face = ctx.createLinearGradient(0, 90, 0, 0);
+    face.addColorStop(0, CARD.top); face.addColorStop(1, CARD.bottom);
+    poly([[0, 0], [120, 0], [120, 90], [0, 90]], face);
+    // shadow under the rim lip, and darker bottom edge
+    const lip = ctx.createLinearGradient(0, 90, 0, 82);
+    lip.addColorStop(0, "rgba(90, 60, 0, 0.22)"); lip.addColorStop(1, "rgba(90, 60, 0, 0)");
+    poly([[0, 82], [120, 82], [120, 90], [0, 90]], lip);
+    const base = ctx.createLinearGradient(0, 0, 0, 7);
+    base.addColorStop(0, "rgba(90, 60, 0, 0.16)"); base.addColorStop(1, "rgba(90, 60, 0, 0)");
+    poly([[0, 0], [120, 0], [120, 7], [0, 7]], base);
+    // fold creases where the flaps meet the face
+    stroke([[0.6, 62], [0.6, 90]], "rgba(90, 60, 0, 0.28)", 1);
+    stroke([[119.4, 62], [119.4, 90]], "rgba(90, 60, 0, 0.28)", 1);
+    // a strip of packing tape over the top, torn at the end
+    poly([[53, 90], [67, 90], [67, 76], [65, 74.5], [63, 76.5], [60.5, 74], [58, 76], [55.5, 74.2], [53, 75.5]], "rgba(255, 255, 255, 0.3)");
+    stroke([[53, 90], [53, 75.5]], "rgba(140, 110, 30, 0.18)", 0.8);
+    // scratches and scuffs
+    stroke([[14, 70], [21, 66.5], [27, 65.5]], CARD.scratch, 0.9);
+    stroke([[18, 73], [24, 70.5]], CARD.scratch, 0.7);
+    stroke([[84, 44], [96, 48], [104, 47]], CARD.scratch, 0.9);
+    stroke([[98, 22], [108, 17]], CARD.scratch, 0.8);
+    stroke([[101, 25], [106, 22.5]], CARD.scratch, 0.6);
+    stroke([[8, 46], [11, 38]], CARD.scratch, 0.7);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.16)"; ctx.beginPath(); ctx.ellipse(96, 66, 9, 4, -0.3, 0, Math.PI * 2); ctx.fill();
+    poly([[0, 0], [9, 0], [0, 7]], "rgba(70, 45, 0, 0.12)");   // worn corner
+    if (catName) {
+      let size = 22;
+      const fit = () => { ctx.font = `600 ${size}px Onest, "Helvetica Neue", Arial, sans-serif`; return ctx.measureText(catName).width; };
+      while (size > 9 && fit() > 100) size -= 1;
+      ctx.globalAlpha = a * 0.88;   // printed onto the card
+      text(catName, 10, 11, size, 600, INK);
+    }
+    ctx.restore();
+  }
+  function drawHearts() {
+    for (const h of brain.hearts) {
+      const a = 7 + h.age * 4, d = a / Math.SQRT2, r = a / 2;
+      ctx.save(); ctx.globalAlpha = Math.max(0, 1 - h.age / 1.4); ctx.fillStyle = HEART; ctx.beginPath();
+      ctx.moveTo(h.x, h.y + d); ctx.lineTo(h.x + d, h.y); ctx.lineTo(h.x, h.y - d); ctx.lineTo(h.x - d, h.y); ctx.closePath(); ctx.fill();
+      for (const [mx, my] of [[h.x - d / 2, h.y + d / 2], [h.x + d / 2, h.y + d / 2]]) { ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+    }
+  }
+  function drawDesk() {
+    const grd = ctx.createLinearGradient(0, H, W, 0);
+    grd.addColorStop(0, "#b9c7d6"); grd.addColorStop(1, "#dcd6c8");
+    ctx.fillStyle = grd; ctx.fillRect(0, 0, W, H);
+    const wx = Math.min(70, W * 0.08), ww = Math.min(380, W * 0.55), wh = Math.min(220, H * 0.4), wy = H - MENU_BAR - 30 - wh;
+    ctx.fillStyle = "rgba(0,0,0,0.10)"; ctx.fillRect(wx + 3, wy - 5, ww, wh);
+    ctx.fillStyle = "#fbfbf8"; ctx.fillRect(wx, wy, ww, wh);
+    ctx.fillStyle = "#ecebe6"; ctx.fillRect(wx, wy + wh - 28, ww, 28);
+    ctx.fillStyle = "#c9c7bf";
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(wx + 16 + i * 18, wy + wh - 14, 5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = "#e3e1da";
+    for (let i = 0; i < 5; i++) ctx.fillRect(wx + 20, wy + wh - 56 - i * 26, ww * (i % 2 ? 0.55 : 0.75), 9);
+    ctx.fillStyle = "rgba(250,250,247,0.82)"; ctx.fillRect(0, H - MENU_BAR, W, MENU_BAR);
+  }
+
+  // =====================================================================
+  //  Input
+  // =====================================================================
+  function toDesk(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: H - (e.clientY - r.top) }; }
+  let drag = null;
+  canvas.addEventListener("pointerenter", () => { ptr.inside = true; });
+  canvas.addEventListener("pointerleave", () => { if (!drag) ptr.inside = false; });
+  canvas.addEventListener("pointermove", (e) => {
+    ptr.raw = toDesk(e); ptr.inside = true;
+    if (!drag) return;
+    const dx = ptr.raw.x - drag.start.x, dy = ptr.raw.y - drag.start.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved && drag.what === "cat") { drag.moved = true; pickUp(); return; }
+    drag.moved = true;
+    if (drag.what === "box") {
+      box.x = clamp(drag.origin.x + dx, 0, W - BOX.w);
+      box.y = clamp(drag.origin.y + dy, 0, H - MENU_BAR - 200);
+    }
+  });
+  canvas.addEventListener("pointerdown", (e) => {
+    ptr.raw = toDesk(e); ptr.inside = true;
+    canvas.setPointerCapture(e.pointerId);
+    const p = ptr.raw;
+    if (hitCat(p)) drag = { what: "cat", start: { ...p }, moved: false };
+    else if (box.show.x > 0.5 && p.x > box.x - 16 && p.x < box.x + BOX.w + 16 && p.y > box.y && p.y < box.y + BOX.rim)
+      drag = { what: "box", start: { ...p }, origin: { x: box.x, y: box.y }, moved: false };
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    if (drag.what === "cat") { if (drag.moved) release(); else clickCat(); }
+    drag = null;
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  function hitCat(p) {
+    const h = headWorld();
+    if (Math.hypot(p.x - h.x, p.y - h.y) < 28) return true;
+    if (isHome()) return false;
+    const l = toLocal(p.x, p.y);
+    return l.x > -38 && l.x < 40 && l.y > -4 && l.y < 50;
+  }
+  function clickCat() {
+    if (brain.act === "inBox") { letOut(); return; }
+    if (committed()) return;
+    if (brain.act === "sleep") { cat.sleeping = false; enter("yawn"); return; }
+    emitHeart(); brain.happyUntil = cat.time + 0.6;
+  }
+  function pickUp() {
+    if (["leaving", "enterBox"].includes(brain.act)) return;
+    cat.boxClip = null; cat.rim.snap(0); cat.air = false; cat.held = true; cat.sleeping = false;
+    brain.swat = null; cat.paw.target = 0; endPet();
+    cat.facing.target = Math.sign(cat.facing.x) || 1;
+    go("held", {});
+  }
+
+  function trackPointer(dt) {
+    const dx = ptr.raw.x - ptr.x, dy = ptr.raw.y - ptr.y;
+    if (Math.abs(dx) + Math.abs(dy) > 0.5) ptr.lastMove = cat.time;
+    if (dt > 0) { const k = Math.min(1, dt * 14); ptr.vx += (dx / dt - ptr.vx) * k; ptr.vy += (dy / dt - ptr.vy) * k; }
+    ptr.x = ptr.raw.x; ptr.y = ptr.raw.y; ptr.speed = Math.hypot(ptr.vx, ptr.vy);
+  }
+
+  // =====================================================================
+  //  Loop
+  // =====================================================================
+  const statusText = document.getElementById("statusText"), toggleBtn = document.getElementById("toggleOut");
+  let lastLabel = "", last = performance.now() / 1000;
+  function frame() {
+    const now = performance.now() / 1000, dt = Math.min(now - last, 1 / 20);
+    last = now;
+    step(dt);
+    render();
+    requestAnimationFrame(frame);
+  }
+  function step(dt) {
+    cat.time += dt;
+    trackPointer(dt);
+    think(dt);
+    cat.speed = Math.abs(cat.vel.x) * (cat.air ? 0 : 1);
+    cat.gait += cat.speed * dt * 0.6 / (14 + 10 * clamp01(cat.speed / 260));
+    cat.breath += dt * (cat.sleeping ? 1.6 : 2.6);
+    if (cat.blinkT >= 0) cat.blinkT += dt;
+    for (const k of SPRINGS) cat[k].step(dt);
+    box.show.step(dt);
+    if (!isHome() && !cat.held) { const b = bounds(); cat.pos.x = clamp(cat.pos.x, b.minX, b.maxX); }
+    stepTail(dt, skeleton());
+    for (const h of brain.hearts) { h.age += dt; h.y += 22 * dt; h.x += Math.sin(h.age * 6 + h.y) * 0.25; }
+    brain.hearts = brain.hearts.filter((h) => h.age < 1.4);
+  }
+  function render() {
+    ctx.setTransform(dpr, 0, 0, -dpr, 0, H * dpr);
+    drawDesk(); drawBox(); drawCat(); drawHearts();
+    const label = brain.act === "inBox" && cat.sleeping ? "Dozing in the box" : brain.act === "inBox" && cat.happy.target ? "Being petted" : LABELS[brain.act];
+    if (label !== lastLabel) { lastLabel = label; statusText.textContent = label; }
+    const btn = isHome() ? "Let it out" : "Call it back";
+    if (toggleBtn.textContent !== btn) toggleBtn.textContent = btn;
+  }
+
+  document.getElementById("catName").addEventListener("input", (e) => { catName = e.target.value.trim().slice(0, 20); });
+  document.getElementById("roam").addEventListener("change", (e) => { roams = e.target.checked; });
+  toggleBtn.addEventListener("click", () => (isHome() ? letOut() : callHome()));
+
+  // ---- boot ----
+  resize();
+  box.x = Math.max(20, W - BOX.w - 70); box.y = 0;
+  ptr.raw = { x: W * 0.35, y: H * 0.45 }; ptr.x = ptr.raw.x; ptr.y = ptr.raw.y;
+  go("inBox", { peek: new Spring(0.95, 3, 0.55), next: 25 });
+  placeInBox(0.95);
+  initTail();
+  new ResizeObserver(resize).observe(stage);
+  requestAnimationFrame(frame);
+
+  // test hooks (used to render previews; harmless for viewers)
+  window.__deskcat = { cat, brain, box, ptr, go, enter, step, render, letOut, callHome, pickUp, release, startle,
+                       launch, placeInBox, Spring, setPtr: (x, y) => { ptr.raw = { x, y }; ptr.inside = true; } };
+})();
+</script>
