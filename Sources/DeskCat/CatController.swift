@@ -145,7 +145,7 @@ final class CatController: NSObject {
             for sound in sim.sounds { audio.play(sound, pan: pan, volume: volume) }
         }
         sim.sounds.removeAll()
-        audio.update(purring: on ? Float(max(0, min(1, sim.purr.x))) : 0, pan: pan, volume: volume)
+        audio.update(purring: on ? Float(max(0, min(1, sim.purr.x))) : 0, intense: sim.purr.target > 0.8, pan: pan, volume: volume)
     }
 
     /// The cat lives on the screen its box is on; the floor is just above the Dock.

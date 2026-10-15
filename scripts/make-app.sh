@@ -8,6 +8,8 @@ APP=build/DeskCat.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$(swift build -c release --show-bin-path)/DeskCat" "$APP/Contents/MacOS/DeskCat"
+mkdir -p "$APP/Contents/Resources"
+cp -R Sounds "$APP/Contents/Resources/Sounds"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

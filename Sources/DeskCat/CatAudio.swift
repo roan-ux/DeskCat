@@ -1,77 +1,118 @@
 import AVFoundation
 
-/// Plays the cat's sounds: one-shots (meows, trills, hisses) on two player nodes so they can
-/// overlap, and the purr as a live source. A touch of small-room reverb on top. The engine is
-/// paused whenever the cat is quiet, so it costs nothing while idle.
+/// Plays the cat's recorded sounds. Meows are one-shots on two mono players (so they can
+/// overlap), panned to where the cat is on screen. The purr is two looping recordings, a soft
+/// one and a stronger one, crossfaded by how hard the cat is purring. The engine is paused
+/// whenever the cat is quiet, so it costs nothing while idle.
 @MainActor
 final class CatAudio {
     private let engine = AVAudioEngine()
-    private let players = [AVAudioPlayerNode(), AVAudioPlayerNode()]
-    private var nextPlayer = 0
-    private let bus = AVAudioMixerNode()
-    private let reverb = AVAudioUnitReverb()
     private let format: AVAudioFormat
-    private let purr: PurrSynth
-    private let purrNode: AVAudioSourceNode
+    private let voices = [AVAudioPlayerNode(), AVAudioPlayerNode()]
+    private var nextVoice = 0
+    private let purrSoft = AVAudioPlayerNode(), purrActive = AVAudioPlayerNode()
+    private var takes: [CatSound: [AVAudioPCMBuffer]] = [:]
+    private var lastTake: [CatSound: Int] = [:]
+    private var softLoop: AVAudioPCMBuffer?, activeLoop: AVAudioPCMBuffer?
+    private var softLevel: Float = 0, activeLevel: Float = 0
+    private var purrRunning = false
     private var busyUntil: CFTimeInterval = 0
 
     init() {
         let hw = engine.outputNode.outputFormat(forBus: 0).sampleRate
-        let sr = hw > 0 ? hw : 48000
-        format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2)!
-        let synth = PurrSynth(sampleRate: Float(sr))
-        purr = synth
-        purrNode = AVAudioSourceNode(format: format) { _, _, frameCount, list -> OSStatus in
-            let buffers = UnsafeMutableAudioBufferListPointer(list)
-            guard buffers.count >= 2,
-                  let l = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-                  let r = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
-            synth.render(left: l, right: r, frames: Int(frameCount))
-            return noErr
-        }
-        engine.attach(bus)
-        engine.attach(reverb)
-        engine.attach(purrNode)
-        for p in players {
+        format = AVAudioFormat(standardFormatWithSampleRate: hw > 0 ? hw : 48000, channels: 1)!
+        for p in voices + [purrSoft, purrActive] {
             engine.attach(p)
-            engine.connect(p, to: bus, format: format)
+            engine.connect(p, to: engine.mainMixerNode, format: format)
         }
-        engine.connect(purrNode, to: bus, format: format)
-        engine.connect(bus, to: reverb, format: format)
-        engine.connect(reverb, to: engine.mainMixerNode, format: format)
-        reverb.loadFactoryPreset(.smallRoom)
-        reverb.wetDryMix = 12
+        let dir = Self.soundsDirectory
+        takes[.mew] = (1...5).compactMap { load(dir?.appendingPathComponent("mew-\($0).mp3"), peak: 0.6) }
+        takes[.meow] = (1...4).compactMap { load(dir?.appendingPathComponent("meow-\($0).mp3"), peak: 0.7) }
+        softLoop = load(dir?.appendingPathComponent("purr-soft.wav"), peak: 0.6)
+        activeLoop = load(dir?.appendingPathComponent("purr-active.wav"), peak: 0.6)
         engine.prepare()
+    }
+
+    /// Inside the app: Contents/Resources/Sounds. Under `swift run`: the Sounds folder in the repo.
+    private static var soundsDirectory: URL? {
+        if let r = Bundle.main.resourceURL?.appendingPathComponent("Sounds"),
+           FileManager.default.fileExists(atPath: r.path) { return r }
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sounds")
+        return FileManager.default.fileExists(atPath: repo.path) ? repo : nil
+    }
+
+    /// Reads a recording, converts it to the engine's mono format and evens out its loudness.
+    private func load(_ url: URL?, peak: Float) -> AVAudioPCMBuffer? {
+        guard let url, let file = try? AVAudioFile(forReading: url),
+              let source = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: source)) != nil,
+              let converter = AVAudioConverter(from: file.processingFormat, to: format) else { return nil }
+        let ratio = format.sampleRate / file.processingFormat.sampleRate
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(Double(source.frameLength) * ratio) + 1024) else { return nil }
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed { status.pointee = .endOfStream; return nil }
+            fed = true; status.pointee = .haveData; return source
+        }
+        guard error == nil, out.frameLength > 0, let samples = out.floatChannelData?[0] else { return nil }
+        let n = Int(out.frameLength)
+        var m: Float = 0
+        for i in 0..<n { m = max(m, abs(samples[i])) }
+        if m > 0 { for i in 0..<n { samples[i] *= peak / m } }
+        return out
+    }
+
+    /// What loaded, e.g. "mew 5, meow 4, purrs 2". Handy when a sound doesn't play.
+    var loadedSummary: String {
+        "mew \(takes[.mew]?.count ?? 0), meow \(takes[.meow]?.count ?? 0), purrs \([softLoop, activeLoop].compactMap { $0 }.count)"
     }
 
     /// `pan` is -1 (left of the screen) ... 1 (right); `volume` 0...1.
     func play(_ sound: CatSound, pan: Float, volume: Float) {
-        let sr = Float(format.sampleRate)
-        let take = SoundSynth.spatialize(SoundSynth.render(sound, sampleRate: sr), pan: pan, sampleRate: sr)
-        let n = take.left.count
-        guard n > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(n)),
-              let l = buffer.floatChannelData?[0], let r = buffer.floatChannelData?[1] else { return }
-        buffer.frameLength = AVAudioFrameCount(n)
-        take.left.withUnsafeBufferPointer { l.update(from: $0.baseAddress!, count: n) }
-        take.right.withUnsafeBufferPointer { r.update(from: $0.baseAddress!, count: n) }
-        guard ensureRunning() else { return }
-        let player = players[nextPlayer]
-        nextPlayer = (nextPlayer + 1) % players.count
-        player.volume = volume
-        player.scheduleBuffer(buffer, at: nil, options: .interrupts)
-        if !player.isPlaying { player.play() }
-        busyUntil = max(busyUntil, CACurrentMediaTime() + Double(n) / format.sampleRate + 1.5)
+        guard let options = takes[sound], !options.isEmpty, ensureRunning() else { return }
+        // a different take from last time
+        var i = Int.random(in: 0..<options.count)
+        if options.count > 1, i == lastTake[sound] { i = (i + 1) % options.count }
+        lastTake[sound] = i
+        let buffer = options[i]
+        let voice = voices[nextVoice]
+        nextVoice = (nextVoice + 1) % voices.count
+        voice.pan = pan
+        voice.volume = volume
+        voice.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        if !voice.isPlaying { voice.play() }
+        busyUntil = max(busyUntil, CACurrentMediaTime() + Double(buffer.frameLength) / format.sampleRate + 1)
     }
 
-    /// Called every frame with how hard the cat is purring (0...1).
-    func update(purring: Float, pan: Float, volume: Float) {
-        purr.targetLevel = purring * volume
-        purr.targetPan = pan
-        if purring > 0.02 {
-            ensureRunning()
-        } else if engine.isRunning && purr.level < 0.0005 && CACurrentMediaTime() > busyUntil {
+    /// Called every frame. `purring` 0...1; `intense` picks the stronger purr (being petted).
+    func update(purring: Float, intense: Bool, pan: Float, volume: Float) {
+        let wantSoft = intense ? 0 : purring * volume, wantActive = intense ? purring * volume : 0
+        softLevel += (wantSoft - softLevel) * 0.08            // gentle crossfade over a few frames
+        activeLevel += (wantActive - activeLevel) * 0.08
+        let audible = softLevel > 0.002 || activeLevel > 0.002
+        if (wantSoft > 0.01 || wantActive > 0.01) && !purrRunning, ensureRunning() {
+            startLoop(purrSoft, softLoop)
+            startLoop(purrActive, activeLoop)
+            purrRunning = true
+        }
+        purrSoft.volume = softLevel; purrActive.volume = activeLevel
+        purrSoft.pan = pan; purrActive.pan = pan
+        if purrRunning && !audible && wantSoft < 0.001 && wantActive < 0.001 {
+            purrSoft.stop(); purrActive.stop()
+            purrRunning = false
+        }
+        if engine.isRunning && !purrRunning && CACurrentMediaTime() > busyUntil {
             engine.pause()
         }
+    }
+
+    private func startLoop(_ player: AVAudioPlayerNode, _ buffer: AVAudioPCMBuffer?) {
+        guard let buffer else { return }
+        player.volume = 0
+        player.scheduleBuffer(buffer, at: nil, options: [.loops, .interrupts])
+        player.play()
     }
 
     /// Restarts the engine if it was paused, or stopped by an output change (e.g. headphones).
