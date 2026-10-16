@@ -72,7 +72,7 @@ func solveIK(_ a: CGPoint, _ b: CGPoint, _ l1: CGFloat, _ l2: CGFloat) -> CGPoin
 enum Act {
     case inBox, leaving, air, land, pin, sit, look, groom, yawn, stretch, loaf, sleep
     case wander, watch, approach, stalk, swat, petted, startle, goHome, held
-    case dizzy, visit, zoomies, chase, climb
+    case dizzy, visit, zoomies, chase, climb, trophy
 
     var label: String {
         switch self {
@@ -102,6 +102,7 @@ enum Act {
         case .zoomies: return "Zoomies!"
         case .chase: return "Chasing the toy"
         case .climb: return "Climbing after it"
+        case .trophy: return "Got the toy!"
         }
     }
 }
@@ -210,6 +211,12 @@ final class CatSim {
     var heldBX = Spring(0, f: 3, z: 0.6), heldBY = Spring(0, f: 3, z: 0.6)
     var curl = Spring(0, f: 2, z: 0.6), paddle = Spring(0, f: 3, z: 0.8)
     var paddlePhase: CGFloat = 0, paddleRate: CGFloat = 6
+    /// 0 side view, 1 the front-facing climbing figure (drawn separately: left paws left, right paws right).
+    var climbView = Spring(0, f: 7, z: 0.9)
+    var climbPhase: CGFloat = 0
+    /// 0...1, how far the paw nearest the toy reaches for it while climbing; -1/1 which side.
+    var climbReach = Spring(0, f: 6, z: 0.6)
+    var climbReachSide: CGFloat = 1
     private var heldGesture = HeldGesture.limp, heldNext: CGFloat = 0
     var tailPhase: CGFloat = 0
     var tail: [CGPoint] = []
@@ -266,7 +273,7 @@ final class CatSim {
         if toyKind != nil && (toy.place == .held || toy.place == .carried || (toy.place == .free && !toyResting)) { return true }
         switch act {
         case .leaving, .land, .pin, .startle, .stretch, .yawn, .stalk, .swat, .petted,
-             .wander, .approach, .goHome, .visit, .zoomies, .dizzy, .chase, .climb:
+             .wander, .approach, .goHome, .visit, .zoomies, .dizzy, .chase, .climb, .trophy:
             return true
         default:
             return false
@@ -405,7 +412,12 @@ final class CatSim {
 
     // MARK: Tail
 
-    private func tailRoot(_ sk: Skeleton) -> CGPoint { toWorld(sk.p.hx - sk.p.hr * 0.8, sk.p.hy + sk.p.hr * 0.2) }
+    private func tailRoot(_ sk: Skeleton) -> CGPoint {
+        let side = toWorld(sk.p.hx - sk.p.hr * 0.8, sk.p.hy + sk.p.hr * 0.2)
+        let front = CGPoint(x: pos.x, y: pos.y - 60 * scale)       // climbing: hangs from the middle
+        let k = smoothstep(clamp01(climbView.x))
+        return CGPoint(x: lerp(side.x, front.x, k), y: lerp(side.y, front.y, k))
+    }
 
     func initTail() {
         let r = tailRoot(skeleton())
@@ -471,7 +483,7 @@ final class CatSim {
         paw.step(dt); pawX.step(dt); pawY.step(dt); rim.step(dt)
         groom.step(dt); wiggle.step(dt); purr.step(dt)
         tailBase.step(dt); tailCurl.step(dt); tailAmp.step(dt); tailPuff.step(dt)
-        dizzy.step(dt); dangle.step(dt); stretch.step(dt)
+        dizzy.step(dt); dangle.step(dt); stretch.step(dt); climbView.step(dt); climbReach.step(dt)
         heldFX.step(dt); heldFY.step(dt); heldBX.step(dt); heldBY.step(dt); curl.step(dt); paddle.step(dt)
     }
 
@@ -660,6 +672,7 @@ final class CatSim {
     private func decideOut(_ per: Perception) -> Act {
         if time < dizzyUntil { return .dizzy }
         if visitPending { return .visit }
+        if toyKind != nil && toy.place == .carried { return playEnergy < 0.35 ? .goHome : .trophy }
         if toyKind != nil && (toy.place == .free || toy.place == .held) {
             let playing = time - lastToyPlay < 3 && playEnergy > 0.15
             if toyExciting || toy.place == .held || playing { return .chase }
@@ -695,7 +708,10 @@ final class CatSim {
             n.dur = rnd(4, 8); n.tiltSign = chance(0.5) ? 1 : -1
             visitPending = false; visitAt = time + rnd(300, 600)
         case .chase: n.dur = rnd(20, 35)
-        case .climb: n.dur = rnd(5, 8); n.x = 0
+        case .climb: n.dur = rnd(6, 9); n.x = 0
+        case .trophy:
+            let side: CGFloat = chance(0.5) ? 1 : -1
+            n.x = clamp(pos.x + side * rnd(150, 350) * scale, minX, maxX); n.dur = rnd(1.2, 2.2)
         case .zoomies:
             var side: CGFloat = chance(0.5) ? 1 : -1
             if (side > 0 ? maxX - pos.x : pos.x - minX) < 250 { side = -side }
@@ -717,7 +733,7 @@ final class CatSim {
         happy.target = time < happyUntil ? 1 : 0
         tilt.target = 0; earL.target = 0; earR.target = 0; rim.target = 0
         dizzy.target = time < dizzyUntil ? 1 : 0
-        dangle.target = 0; stretch.target = 0
+        dangle.target = 0; stretch.target = 0; climbView.target = 0; climbReach.target = 0
         heldFX.target = 0; heldFY.target = 0; heldBX.target = 0; heldBY.target = 0; curl.target = 0; paddle.target = 0
         if swat == nil { paw.target = 0 }
         open.target = sleeping ? 0 : 1
@@ -782,15 +798,25 @@ final class CatSim {
             pose(.crouch); brake(dt); paw.target = 1; pawX.target = 34; pawY.target = 2
             mood(.hunt)
             let fs: CGFloat = facing.target >= 0 ? 1 : -1
-            if toyKind != nil && toy.place == .free && abs(toy.pos.x - (pos.x + fs * 30 * scale)) < 45 * scale
-                && toy.pos.y - toyRadius - floorY < 20 * scale {
-                // caught it: pinned under the paws
+            let caught = toyKind != nil && toy.place == .free && abs(toy.pos.x - (pos.x + fs * 30 * scale)) < 45 * scale
+                && toy.pos.y - toyRadius - floorY < 20 * scale
+            if caught {
+                // pinned under the paws
                 toy.vx = 0; toy.spin = 0; toy.pos.x += (pos.x + fs * 32 * scale - toy.pos.x) * 0.3
                 lookAt(toy.pos.x, toy.pos.y)
             } else {
                 lookAt(ptrX, ptrY)
             }
-            if t > 0.6 { paw.target = 0; playful = max(0.2, playful - 0.1); enter(chance(0.5) ? .sit : .watch) }
+            if t > 0.6 {
+                paw.target = 0; playful = max(0.2, playful - 0.1)
+                if caught {
+                    // Caught the toy: keep playing with it, or if that's enough, take it home.
+                    playEnergy = max(0, playEnergy - 0.035)      // every pounce tires it a little
+                    if playEnergy < 0.3 { snatchToy(); go(.goHome) } else { enter(.chase) }
+                } else {
+                    enter(chance(0.5) ? .sit : .watch)
+                }
+            }
         case .sit:
             pose(.sit); brake(dt); mood(.relaxed); idleLook(per)
             if t > d.dur { enter(decideOut(per)) }
@@ -855,6 +881,7 @@ final class CatSim {
         case .dizzy: dizzyTick(dt)
         case .chase: chase(dt)
         case .climb: climb(dt)
+        case .trophy: trophy(dt)
         case .visit: visit(dt, per)
         case .zoomies:
             pose(.stand); mood(.happy); lookForward(); earL.target = -0.2; earR.target = -0.2
@@ -1202,6 +1229,40 @@ final class CatSim {
         toy.spin = -toy.vx / max(toyRadius, 1) * 0.4 + rnd(-3, 3)
     }
 
+    /// Takes the toy in its mouth, from your pointer or off the floor.
+    private func snatchToy() {
+        toy.place = .carried; toy.vx = 0; toy.vy = 0
+        happyUntil = time + 0.8
+        lastToyPlay = time
+    }
+
+    /// Trots off with the toy in its mouth, sits with it, then drops it to play again
+    /// or, if it's tired, takes it home.
+    private func trophy(_ dt: CGFloat) {
+        guard toy.place == .carried else { enter(decideOut(perceiveQuiet())); return }
+        mood(.happy); lastToyPlay = time
+        if !d.ready {
+            pose(.stand); lookForward()
+            if moveToward(d.x, 150, dt, 8) || t > 6 { d.ready = true; d.wait = 0 }
+        } else {
+            pose(.sit); brake(dt); idleLookForward()
+            d.wait += dt
+            if d.wait > d.dur {
+                if playEnergy < 0.35 { go(.goHome) }
+                else { toy.place = .free; toy.vx = 0; toy.vy = 0; enter(.chase) }
+            }
+        }
+    }
+
+    private func perceiveQuiet() -> Perception {
+        Perception(head: headWorld(), dH: hypot(ptrX - headWorld().x, ptrY - headWorld().y), idle: time - ptrLastMove,
+                   moving: time - ptrLastMove < 0.25, near: false, startle: false)
+    }
+
+    private func idleLookForward() {
+        gx.target = 0.3 * sgn(facing.target); gy.target = 0; pitch.target = 0.05; headFacing.target = sgn(facing.target)
+    }
+
     private func batToy() {
         let fs: CGFloat = facing.target >= 0 ? 1 : -1
         let dir: CGFloat = sgn(toy.pos.x - pos.x) == 0 ? fs : sgn(toy.pos.x - pos.x)
@@ -1209,6 +1270,7 @@ final class CatSim {
         toy.place = .free
         toy.vx = dir * rnd(260, 520) * scale; toy.vy = rnd(140, 380); toy.spin = rnd(-14, 14)
         lastToyHit = time
+        playEnergy = max(0, playEnergy - 0.025)
     }
 
     /// Runs after the toy, leads it while it flies, leaps at it, bats it about, pounces on it.
@@ -1248,36 +1310,57 @@ final class CatSim {
                     batToy(); d.wait = rnd(0.5, 1.1)
                 }
                 return
-            } else if swat == nil {
-                startSwat(toy.pos)                                        // dangled in front of its nose
+            } else {                                                      // dangled in front of its nose
+                if swat == nil && chance(dt * 2) { startSwat(toy.pos) }
+                let h = headWorld()
+                if hypot(toy.pos.x - h.x, toy.pos.y - h.y) < 34 * scale + r {
+                    d.wiggle += dt
+                    if d.wiggle > 0.5 && chance(dt * 2.5) { snatchToy(); enter(.trophy); return }
+                }
             }
         }
         let fast = near > 200 * scale
         pose(fast ? .stand : .crouch)
         if !fast { crouch.target = 0.35 }
         let arrived = moveToward(tx - side * (14 * scale + r), fast ? 320 : 170, dt, 6)
-        if arrived && toyResting && (playEnergy < 0.15 || t > d.dur) { enter(chance(0.5) ? .sit : .groom) }
+        // Tired of it: picks it up and takes it home.
+        if arrived && toyResting && (playEnergy < 0.25 || t > d.dur) { snatchToy(); go(.goHome) }
         else if t > d.dur + 10 { enter(.sit) }
     }
 
     /// The toy is held out of reach: claws its way up the screen after it, then lets go and drops.
     private func climb(_ dt: CGFloat) {
-        pose(.stand); hold.target = 1
-        heldFX.target = 7; heldFY.target = 18; heldBX.target = 3; heldBY.target = 6
-        paddle.target = 0.85; paddleRate = 6.5; paddlePhase += dt * paddleRate
+        pose(.stand); hold.target = 1; climbView.target = 1
         mood(.hunt); tailBase.target = -1.45; tailCurl.target = 0.1; tailAmp.target = 0.06
         earL.target = 0.1; earR.target = 0.1; dil.target = 1
-        lookAt(toy.pos.x, toy.pos.y)
+        gx.target = clamp((toy.pos.x - pos.x) / (160 * scale), -0.6, 0.6); gy.target = 0.8   // looking up at it
         lastToyPlay = time
-        let maxH = max(0, (maxY - floorY) * 0.55)
-        let want = clamp(toy.pos.y - floorY - 150 * scale, 0, maxH)
-        if toy.place == .held && t < d.dur { d.x += clamp(want - d.x, -60 * scale * dt, 120 * scale * dt) }
+        // Climbs until its paws are at the toy (they reach ~30 above the head), up to 60% of the screen.
+        let maxH = max(0, (maxY - floorY) * 0.6)
+        let want = clamp(toy.pos.y - floorY - 74 * scale - 25 * scale, 0, maxH)
+        let before = d.x
+        if toy.place == .held && t < d.dur { d.x += clamp(want - d.x, -60 * scale * dt, 130 * scale * dt) }
+        climbPhase += dt * (1.5 + 5 * abs(d.x - before) / max(dt, 0.001) / (130 * scale))   // legs work harder while moving
         pos.x += clamp(toy.pos.x - pos.x, -45 * dt, 45 * dt)
         pos.y = floorY + d.x + 74 * scale * clamp01(hold.x)     // feet stay on the wall as it turns upright
-        let h = headWorld()
-        if swat == nil && hypot(toy.pos.x - h.x, toy.pos.y - h.y) < 90 * scale && chance(dt * 2.5) { startSwat(toy.pos) }
+        // At the top: reach for it with the nearer paw, then grab it in its mouth.
+        let paws = CGPoint(x: pos.x, y: pos.y + 22 * scale)
+        let gap = hypot(toy.pos.x - paws.x, toy.pos.y - paws.y)
+        climbReachSide = toy.pos.x >= pos.x ? 1 : -1
+        climbReach.target = gap < 80 * scale ? 1 : 0
+        if toy.place == .held && gap < 32 * scale + toyRadius {
+            d.wiggle += dt
+            if d.wiggle > 0.45 && chance(dt * 3) {
+                snatchToy()
+                climbView.target = 0; hold.target = 0
+                pos.y = floorY + d.x
+                air = true; velY = 80; velX = 0
+                go(.air, ActData(then: .land))
+                return
+            }
+        }
         if toy.place != .held || t > d.dur || abs(toy.pos.x - pos.x) > 220 * scale {
-            hold.target = 0; paddle.target = 0
+            hold.target = 0; paddle.target = 0; climbView.target = 0
             pos.y = floorY + d.x
             air = true; velY = 60
             velX = toy.place == .free ? clamp((toy.pos.x - pos.x) * 1.2, -350, 350) : 0

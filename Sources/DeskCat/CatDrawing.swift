@@ -17,6 +17,7 @@ func drawGroundShadow(_ ctx: CGContext, center: CGPoint, rx: CGFloat, ry: CGFloa
 /// window's origin sits at its own (0, 0). Port of the drawing code in `playground.html`.
 extension CatSim {
     func draw(in ctx: CGContext) {
+        if climbView.x > 0.5 { drawClimbing(ctx); return }
         let sk = skeleton(), p = sk.p, pal = Palette.current, s = scale
         if boxClip == nil && !held {     // shadow shrinks and fades as it leaves the ground
             let k = clamp01(1 - max(0, pos.y - floorY) / 220)
@@ -61,6 +62,60 @@ extension CatSim {
         }
         if sleeping { drawZzz(ctx, sk) }
         if dizzy.x > 0.03 { drawStars(ctx, sk) }
+        for h in hearts { drawHeart(ctx, h) }
+    }
+
+    /// Climbing the screen after the toy, seen from the front: left paws on the left, right paws on
+    /// the right, reaching up in turn while the back feet push, tail hanging down the middle.
+    private func drawClimbing(_ ctx: CGContext) {
+        let pal = Palette.current, s = scale, ph = climbPhase * .pi * 2
+        // shadow on the floor far below, small and faint
+        let k = clamp01(1 - max(0, pos.y - 74 * s - floorY) / 220)
+        drawGroundShadow(ctx, center: CGPoint(x: pos.x, y: floorY + 1), rx: 26 * s * (0.6 + 0.4 * k), ry: 3.5 * s, alpha: 0.18 * k)
+        drawTail(ctx)
+        ctx.saveGState()
+        ctx.translateBy(x: pos.x, y: pos.y)
+        ctx.rotate(by: sin(ph * 0.5) * 0.05 + lean.x)     // sways a little with each pull
+        ctx.scaleBy(x: s, y: s)
+        let bob = sin(ph) * 1.5
+        func limb(_ a: CGPoint, _ b: CGPoint, out: CGFloat, _ color: CGColor, upper: CGFloat, lower: CGFloat) {
+            // the joint bows outwards, like elbows and knees seen from the front
+            let m = CGPoint(x: (a.x + b.x) / 2 + out, y: (a.y + b.y) / 2)
+            line(ctx, a, m, upper, color)
+            line(ctx, m, b, lower, color)
+            ctx.setFillColor(color)
+            ctx.fillEllipse(in: CGRect(x: b.x - 5.4, y: b.y - 4.6, width: 10.8, height: 9.2))
+        }
+        // back legs: alternate pushes against the screen
+        for side: CGFloat in [-1, 1] {
+            let push = sin(ph + (side < 0 ? .pi : 0))
+            limb(CGPoint(x: side * 8, y: -50 + bob), CGPoint(x: side * 16, y: -70 + push * 5), out: side * 6, pal.coat, upper: 11, lower: 8)
+        }
+        // body
+        bean(ctx, CGPoint(x: 0, y: -48 + bob), 14, CGPoint(x: 0, y: -22 + bob), 15, back: 0, belly: 0)
+        // front legs: reach up in turn; near the toy, the paw on its side stretches for it
+        let reach = clamp01(climbReach.x)
+        for side: CGFloat in [-1, 1] {
+            let pull = sin(ph + (side < 0 ? 0 : .pi))
+            // out beside the head, so the reaching reads
+            var paw = CGPoint(x: side * 27, y: 22 + pull * 8 + bob)
+            if side == climbReachSide && reach > 0 {
+                let up = CGPoint(x: side * 25, y: 42 + sin(time * 14) * 3)
+                paw = CGPoint(x: lerp(paw.x, up.x, reach), y: lerp(paw.y, up.y, reach))
+            }
+            limb(CGPoint(x: side * 11, y: -20 + bob), paw, out: side * 6, pal.coat, upper: 10, lower: 8)
+        }
+        // head, face on, looking up at the toy
+        ctx.translateBy(x: 0, y: 6 + bob * 0.6)
+        ctx.rotate(by: tilt.x * 0.5)
+        ear(ctx, CGPoint(x: -23, y: 8), CGPoint(x: -8, y: 18), CGPoint(x: -19, y: 34), earL.x * 0.9)
+        ear(ctx, CGPoint(x: 8, y: 18), CGPoint(x: 23, y: 8), CGPoint(x: 19, y: 34), -earR.x * 0.9)
+        ctx.setFillColor(pal.coat)
+        headPath(ctx, 25, 21)
+        ctx.fillPath()
+        eye(ctx, -9, 3, 8, gx.x, gy.x)
+        eye(ctx, 9, 3, 8, gx.x, gy.x)
+        ctx.restoreGState()
         for h in hearts { drawHeart(ctx, h) }
     }
 
