@@ -13,6 +13,7 @@ final class CatController: NSObject {
         didSet {
             boxView.menuProvider = menuProvider
             catView.menuProvider = menuProvider
+            toyView.menuProvider = menuProvider
         }
     }
 
@@ -31,6 +32,10 @@ final class CatController: NSObject {
     private let boxView: BoxView
     private let catWindow: PetWindow
     private let catView: CatView
+    private let toyWindow: PetWindow
+    private let toyView: ToyView
+    /// What the toy window last drew, so a toy lying still isn't redrawn every frame.
+    private var toyDrawn: [CGFloat] = []
     private var displayLink: AnyObject?
     private var timer: Timer?
     private var lastTime: CFTimeInterval = 0
@@ -44,7 +49,14 @@ final class CatController: NSObject {
         boxWindow = PetWindow.make(size: BoxView.size(scale: scale))
         catView = CatView(frame: NSRect(origin: .zero, size: CatView.size(scale: scale)))
         catWindow = PetWindow.make(size: CatView.size(scale: scale))
+        toyView = ToyView(frame: NSRect(origin: .zero, size: ToyView.size(scale: scale)))
+        toyWindow = PetWindow.make(size: ToyView.size(scale: scale))
         super.init()
+        toyWindow.contentView = toyView
+        toyWindow.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 2)   // above the cat: it carries it
+        toyView.sim = sim
+        toyView.onPress = { [weak self] in self?.toyPressed() }
+        toyView.onRelease = { [weak self] in self?.toyReleased() }
         boxWindow.contentView = boxView
         catWindow.contentView = catView
         // The cat always floats just above its box.
@@ -69,6 +81,7 @@ final class CatController: NSObject {
         syncWindows()
         boxWindow.orderFrontRegardless()
         catWindow.orderFrontRegardless()
+        if sim.toyKind != nil { toyWindow.orderFrontRegardless() }
         lastTime = CACurrentMediaTime()
         startFrameClock()
     }
@@ -87,6 +100,8 @@ final class CatController: NSObject {
         sim.roamDelay = look.personality.roamDelay
         boxView.scale = scale
         catWindow.setContentSize(CatView.size(scale: scale))
+        toyWindow.setContentSize(ToyView.size(scale: scale))
+        toyView.needsDisplay = true
         boxWindow.setContentSize(BoxView.size(scale: scale))
         boxView.needsDisplay = true
         catView.needsDisplay = true
@@ -144,6 +159,8 @@ final class CatController: NSObject {
         lastTime = now
         updateWorld()
         sim.roams = Settings.roamsOnItsOwn
+        let toy = Settings.toy
+        if sim.toyKind != toy { sim.toyKind = toy }
         let dt = CGFloat(min(elapsed, 1.0 / 12.0))
         sim.step(dt, pointer: NSEvent.mouseLocation)
         syncWindows()
@@ -172,6 +189,7 @@ final class CatController: NSObject {
         sim.floorY = vf.minY
         sim.minX = vf.minX + 50
         sim.maxX = vf.maxX - 50
+        sim.maxY = vf.maxY
     }
 
     private func syncWindows() {
@@ -180,6 +198,8 @@ final class CatController: NSObject {
         let catOrigin = CGPoint(x: (sim.pos.x - anchor.x).rounded(), y: (sim.pos.y - anchor.y).rounded())
         if catWindow.frame.origin != catOrigin { catWindow.setFrameOrigin(catOrigin) }
         catView.needsDisplay = true
+
+        syncToyWindow()
 
         let boxOrigin = CGPoint(x: (sim.box.x - inset.x).rounded(), y: (sim.box.y - inset.y).rounded())
         if boxWindow.frame.origin != boxOrigin { boxWindow.setFrameOrigin(boxOrigin) }
@@ -194,6 +214,31 @@ final class CatController: NSObject {
             }
         }
     }
+
+    private func syncToyWindow() {
+        guard sim.toyKind != nil else {
+            if toyWindow.isVisible { toyWindow.orderOut(nil) }
+            return
+        }
+        let size = ToyView.size(scale: sim.scale), t = sim.toy
+        let origin = CGPoint(x: (t.pos.x - size.width / 2).rounded(), y: (t.pos.y - size.height / 2).rounded())
+        if toyWindow.frame.origin != origin { toyWindow.setFrameOrigin(origin) }
+        if !toyWindow.isVisible { toyWindow.orderFrontRegardless() }
+        let place: CGFloat = t.place == .box ? 0 : t.place == .held ? 1 : t.place == .free ? 2 : 3
+        let state = [t.pos.x, t.pos.y, t.angle, t.facing, place, (sim.boxShow.x * 100).rounded(), CGFloat(sim.toyKind?.radius ?? 0)]
+        if state != toyDrawn {
+            toyDrawn = state
+            toyView.needsDisplay = true
+        }
+    }
+
+    // MARK: The toy: press to pick it up, let go to throw
+
+    private func toyPressed() {
+        if !sim.grabToy() { return }
+    }
+
+    private func toyReleased() { sim.throwToy() }
 
     // MARK: Box dragging (only while the cat is home and the box is showing)
 

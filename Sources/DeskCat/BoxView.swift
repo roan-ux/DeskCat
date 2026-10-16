@@ -139,17 +139,28 @@ final class BoxView: NSView {
         ctx.restoreGState()
     }
 
-    /// The name, shrunk to fit the front of the box.
+    /// The name, stamped on the middle of the box: chunky rounded capitals, shrunk to fit.
     private func drawName() {
-        let text = name as NSString
+        let text = name.uppercased() as NSString
         guard text.length > 0 else { return }
-        var fontSize: CGFloat = 22
+        var fontSize: CGFloat = 28
         var attrs: [NSAttributedString.Key: Any] = [:]
+        var size = CGSize.zero
         repeat {
-            attrs = [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold), .foregroundColor: Palette.current.boxText]
-            if text.size(withAttributes: attrs).width <= 100 { break }
+            let base = NSFont.systemFont(ofSize: fontSize, weight: .black)
+            let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: fontSize) } ?? base
+            attrs = [.font: font, .foregroundColor: Palette.current.boxText, .kern: fontSize * 0.06]
+            size = text.size(withAttributes: attrs)
+            if size.width <= 102 { break }
             fontSize -= 1
-        } while fontSize > 9
-        text.draw(at: CGPoint(x: 10, y: 6), withAttributes: attrs)
+        } while fontSize > 10
+        // Centred on the front face (below the tape), tilted a hair like a hand stamp.
+        let ctx = NSGraphicsContext.current?.cgContext
+        ctx?.saveGState()
+        ctx?.translateBy(x: 60, y: 38)
+        ctx?.rotate(by: -0.035)
+        // Capitals have no descenders, so nudge down a little to centre them optically.
+        text.draw(at: CGPoint(x: -size.width / 2 + fontSize * 0.03, y: -size.height / 2 - fontSize * 0.08), withAttributes: attrs)
+        ctx?.restoreGState()
     }
 }

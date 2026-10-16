@@ -54,6 +54,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(to: menu, "Rename…", #selector(rename))
         add(to: menu, "Wander on its own", #selector(toggleRoam)).state = Settings.roamsOnItsOwn ? .on : .off
         add(to: menu, "Sounds", #selector(toggleSound)).state = Settings.soundOn ? .on : .off
+        let toys = NSMenu()
+        let current = Settings.toy
+        add(to: toys, "No toy", #selector(pickToy(_:))).state = current == nil ? .on : .off
+        toys.addItem(.separator())
+        for kind in ToyKind.allCases {
+            let item = add(to: toys, kind.title, #selector(pickToy(_:)))
+            item.representedObject = kind.rawValue
+            item.state = current == kind ? .on : .off
+        }
+        let toyItem = NSMenuItem(title: "Toy", action: nil, keyEquivalent: "")
+        toyItem.submenu = toys
+        menu.addItem(toyItem)
         add(to: menu, "Move box to the corner", #selector(resetBox))
         menu.addItem(.separator())
         add(to: menu, "Quit DeskCat", #selector(NSApplication.terminate(_:)), key: "q", target: NSApp)
@@ -80,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleRoam() {
         Settings.roamsOnItsOwn.toggle()
+    }
+
+    @objc private func pickToy(_ sender: NSMenuItem) {
+        Settings.toy = (sender.representedObject as? String).flatMap(ToyKind.init(rawValue:))
     }
 
     @objc private func toggleSound() {

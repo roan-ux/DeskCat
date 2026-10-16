@@ -35,6 +35,7 @@ private final class SettingsModel: ObservableObject {
     @Published var name = Settings.name ?? ""
     @Published var roams = Settings.roamsOnItsOwn
     @Published var soundOn = Settings.soundOn
+    @Published var toy = Settings.toy?.rawValue ?? "none"
     @Published var volume = Settings.soundVolume
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
     @Published var loginNote: String?
@@ -60,6 +61,13 @@ private struct SettingsView: View {
                     ForEach(Personality.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+            }
+            Section("Toy") {
+                Picker("Toy in the box", selection: $m.toy) {
+                    Text("No toy").tag("none")
+                    ForEach(ToyKind.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+                }
+                Text("Drag it out of the box to tease the cat, or throw it.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Box") {
                 LabeledContent("Colour") { SwatchRow(swatches: Look.boxColors, selection: $m.look.box) }
@@ -89,7 +97,7 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         // A grouped Form scrolls, so it has no height of its own; without one the window collapses to its title bar.
-        .frame(width: 440, height: 660)
+        .frame(width: 440, height: 740)
         .onChange(of: m.look) { newValue in
             Look.current = newValue
             onLookChange()
@@ -100,6 +108,7 @@ private struct SettingsView: View {
         }
         .onChange(of: m.roams) { Settings.roamsOnItsOwn = $0 }
         .onChange(of: m.soundOn) { Settings.soundOn = $0 }
+        .onChange(of: m.toy) { Settings.toy = ToyKind(rawValue: $0) }
         .onChange(of: m.volume) { Settings.soundVolume = $0 }
         .onChange(of: m.openAtLogin) { setOpenAtLogin($0) }
     }

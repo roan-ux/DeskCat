@@ -17,6 +17,15 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "roamsOnItsOwn") }
     }
 
+    /// The cat's toy; nil for none. A little shark until you pick something else.
+    static var toy: ToyKind? {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: "toy") else { return .miniShark }
+            return ToyKind(rawValue: raw)
+        }
+        set { UserDefaults.standard.set(newValue?.rawValue ?? "none", forKey: "toy") }
+    }
+
     static var soundOn: Bool {
         get { UserDefaults.standard.object(forKey: "soundOn") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "soundOn") }
