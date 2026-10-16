@@ -417,9 +417,19 @@ final class CatSim {
 
     // MARK: Tail
 
+    /// 1 when the climber's back legs are bunched up under it, 0 when stretched out after the push.
+    var climbSqueeze: CGFloat {
+        smoothstep(clamp01(climbPhase / 0.35)) - smoothstep(clamp01((climbPhase - 0.35) / 0.25))
+    }
+    /// Height of the climber's hips (cat units); they rise as the back legs gather.
+    var climbHipY: CGFloat { -48 + 6 * climbSqueeze }
+
     private func tailRoot(_ sk: Skeleton) -> CGPoint {
-        let side = toWorld(sk.p.hx - sk.p.hr * 0.8, sk.p.hy + sk.p.hr * 0.2)
-        let front = CGPoint(x: pos.x, y: pos.y - 60 * scale)       // climbing: hangs from the middle
+        // Held upright, start a little inside the hips so the tail grows out of them rather than
+        // sticking on at the edge of the hip circle.
+        let deep = clamp01(hold.x)
+        let side = toWorld(sk.p.hx - sk.p.hr * lerp(0.8, 0.35, deep), sk.p.hy + sk.p.hr * lerp(0.2, -0.15, deep))
+        let front = CGPoint(x: pos.x, y: pos.y + (climbHipY - 8) * scale)   // climbing: from inside the hips, moving with them
         let k = smoothstep(clamp01(climbView.x))
         return CGPoint(x: lerp(side.x, front.x, k), y: lerp(side.y, front.y, k))
     }

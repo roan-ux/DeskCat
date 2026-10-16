@@ -91,7 +91,7 @@ extension CatSim {
             ctx.setFillColor(color)
             ctx.fillEllipse(in: CGRect(x: b.x - 5.4, y: b.y - 4.6, width: 10.8, height: 9.2))
         }
-        let hips = CGPoint(x: 0, y: -48 + 6 * squeeze), chest = CGPoint(x: 0, y: -22 + 2 * squeeze)
+        let hips = CGPoint(x: 0, y: climbHipY), chest = CGPoint(x: 0, y: -22 + 2 * squeeze)
         // back legs: both gather up under the body, then push together (feet stay put while it rises)
         func backLegs() {
             for side: CGFloat in [-1, 1] {
@@ -186,7 +186,9 @@ extension CatSim {
         let n = tail.count, puff = tailPuff.x
         guard n > 1 else { return }
         for i in 0..<(n - 1) {
-            line(ctx, tail[i], tail[i + 1], lerp(7.5, 4.6, CGFloat(i) / CGFloat(n - 1)) * puff * scale, Palette.current.coat)
+            // a thicker base that flares into the body, so the tail looks like it grows out of it
+            let flare: CGFloat = i == 0 ? 1.5 : (i == 1 ? 1.15 : 1)
+            line(ctx, tail[i], tail[i + 1], lerp(7.5, 4.6, CGFloat(i) / CGFloat(n - 1)) * flare * puff * scale, Palette.current.coat)
         }
     }
 
