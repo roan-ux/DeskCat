@@ -234,6 +234,23 @@ final class CatSim {
     private var visitPending = false
 
     var isHome: Bool { act == .inBox || act == .leaving }
+
+    /// True while something on screen moves quickly enough to need 60 fps. Otherwise (sitting,
+    /// loafing, waiting in the box) breathing and tail sway look the same at 30 fps, and the app
+    /// drops the frame rate to save power.
+    var needsSmoothMotion: Bool {
+        if held || air || swat != nil || time < dizzyUntil || speed > 3 || hearts.count > 0 { return true }
+        if abs(boxShow.x - boxShow.target) > 0.002 || abs(boxShow.v) > 0.01 { return true }
+        if act == .inBox && abs(d.peek.x - d.peek.target) > 0.01 { return true }
+        if ptrSpeed > 30 && hypot(ptrX - pos.x, ptrY - pos.y) < 320 * scale { return true }   // watching or being petted
+        switch act {
+        case .leaving, .land, .pin, .startle, .stretch, .yawn, .stalk, .swat, .petted,
+             .wander, .approach, .goHome, .visit, .zoomies, .dizzy:
+            return true
+        default:
+            return false
+        }
+    }
     private var committed: Bool {
         if swat != nil { return true }
         switch act {

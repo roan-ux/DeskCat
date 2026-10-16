@@ -103,8 +103,9 @@ final class CatController: NSObject {
 
     private func startFrameClock() {
         if #available(macOS 14.0, *) {
-            // Display-synced: one simulation step per screen refresh, the smoothest option.
+            // Display-synced, but capped (see frameRate): the display may refresh at 120 Hz.
             let link = catView.displayLink(target: self, selector: #selector(frame(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 4, maximum: 60, preferred: 30)
             link.add(to: .main, forMode: .common)
             displayLink = link
         } else {
@@ -119,16 +120,31 @@ final class CatController: NSObject {
 
     @objc private func timerFired() { tick() }
 
+    /// Frames per second the cat needs right now. Each frame costs a redraw here and a composite
+    /// in WindowServer, so only draw as often as the motion needs.
+    private var frameRate: Double {
+        if !catWindow.occlusionState.contains(.visible) { return 4 }   // displays asleep, screen locked
+        if sim.needsSmoothMotion { return 60 }
+        return sim.sleeping ? 15 : 30
+    }
+    private var currentRate: Double = 30
+
     private func tick() {
         let now = CACurrentMediaTime()
         let elapsed = now - lastTime
-        // A dozing cat only needs ~20 fps for its breathing; save the battery.
-        let resting = sim.sleeping && abs(sim.boxShow.x - sim.boxShow.target) < 0.001 && abs(sim.boxShow.v) < 0.001
-        if resting && elapsed < 1.0 / 20.0 { return }
+        let rate = frameRate
+        if rate != currentRate {
+            currentRate = rate
+            if #available(macOS 14.0, *), let link = displayLink as? CADisplayLink {
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 4, maximum: 60, preferred: Float(rate))
+            }
+        }
+        // The display link may still fire faster than asked (it snaps to what the display supports).
+        if elapsed < 1.0 / rate - 0.002 { return }
         lastTime = now
         updateWorld()
         sim.roams = Settings.roamsOnItsOwn
-        let dt = CGFloat(min(elapsed, 1.0 / 20.0))
+        let dt = CGFloat(min(elapsed, 1.0 / 12.0))
         sim.step(dt, pointer: NSEvent.mouseLocation)
         syncWindows()
         playSounds()
