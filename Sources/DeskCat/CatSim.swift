@@ -213,7 +213,14 @@ final class CatSim {
     var paddlePhase: CGFloat = 0, paddleRate: CGFloat = 6
     /// 0 side view, 1 the front-facing climbing figure (drawn separately: left paws left, right paws right).
     var climbView = Spring(0, f: 7, z: 0.9)
+    /// Progress through one climbing stroke, 0...1: hold, gather the back legs, push up, re-hook the front paws.
     var climbPhase: CGFloat = 0
+    /// Which front paw re-hooks first this stroke (they take turns leading).
+    var climbLead: CGFloat = 1
+    /// How far one stroke lifts the cat, in cat units (about how far the back feet can gather up).
+    static let climbStroke: CGFloat = 22
+    /// Thin rims on limbs that cross in front of the body (held, climbing). Off until it's decided on.
+    static var limbRims = false
     /// 0...1, how far the paw nearest the toy reaches for it while climbing; -1/1 which side.
     var climbReach = Spring(0, f: 6, z: 0.6)
     var climbReachSide: CGFloat = 1
@@ -708,7 +715,7 @@ final class CatSim {
             n.dur = rnd(4, 8); n.tiltSign = chance(0.5) ? 1 : -1
             visitPending = false; visitAt = time + rnd(300, 600)
         case .chase: n.dur = rnd(20, 35)
-        case .climb: n.dur = rnd(6, 9); n.x = 0
+        case .climb: n.dur = rnd(10, 14); n.x = 0; n.landY = 0; climbPhase = 0
         case .trophy:
             let side: CGFloat = chance(0.5) ? 1 : -1
             n.x = clamp(pos.x + side * rnd(150, 350) * scale, minX, maxX); n.dur = rnd(1.2, 2.2)
@@ -1338,9 +1345,18 @@ final class CatSim {
         // Climbs until its paws are at the toy (they reach ~30 above the head), up to 60% of the screen.
         let maxH = max(0, (maxY - floorY) * 0.6)
         let want = clamp(toy.pos.y - floorY - 74 * scale - 25 * scale, 0, maxH)
-        let before = d.x
-        if toy.place == .held && t < d.dur { d.x += clamp(want - d.x, -60 * scale * dt, 130 * scale * dt) }
-        climbPhase += dt * (1.5 + 5 * abs(d.x - before) / max(dt, 0.001) / (130 * scale))   // legs work harder while moving
+        // Climbs in strokes, about two a second: the body only rises during the push, so it holds,
+        // gathers, surges up, re-hooks, rather than scrabbling. d.landY is the height of finished strokes.
+        let stroke = Self.climbStroke * scale
+        let moreToGo = toy.place == .held && t < d.dur && want > d.landY + 4 * scale
+        if moreToGo || climbPhase > 0 {
+            climbPhase += dt / 0.5
+            if climbPhase >= 1 { climbPhase = 0; d.landY += stroke; climbLead = -climbLead }
+        }
+        if !moreToGo && climbPhase == 0 && want < d.landY - stroke * 1.5 {
+            d.landY = max(0, d.landY - 60 * scale * dt)     // toy lowered: slides down a bit
+        }
+        d.x = d.landY + smoothstep(clamp01((climbPhase - 0.35) / 0.25)) * stroke
         pos.x += clamp(toy.pos.x - pos.x, -45 * dt, 45 * dt)
         pos.y = floorY + d.x + 74 * scale * clamp01(hold.x)     // feet stay on the wall as it turns upright
         // At the top: reach for it with the nearer paw, then grab it in its mouth.

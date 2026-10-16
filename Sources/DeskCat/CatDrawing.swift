@@ -35,9 +35,10 @@ extension CatSim {
         let back = lerp(-1.5, 2.5, clamp01(crouch.x)), belly = lerp(-2, -4, clamp01(lie.x))
         bean(ctx, hip, p.hr * vol, chest, p.cr * vol, back: back, belly: belly)
         line(ctx, chest, toWorld(p.kx, p.ky), 17 * s, pal.coat)   // neck
-        drawLeg(ctx, sk.legs[.nb], pal.coat)
+        let heldRim = Self.limbRims && hold.x > 0.5 ? pal.pawRim : nil   // dangling legs cross the body
+        drawLeg(ctx, sk.legs[.nb], pal.coat, outline: heldRim)
         let pawUp = max(paw.x, groom.x) > 0.3
-        if !pawUp && (boxClip == nil || rim.x < 0.5) { drawLeg(ctx, sk.legs[.nf], pal.coat) }
+        if !pawUp && (boxClip == nil || rim.x < 0.5) { drawLeg(ctx, sk.legs[.nf], pal.coat, outline: heldRim) }
         drawHead(ctx, sk)
         // A paw in front of the face gets a faint rim so it still reads against the head.
         if pawUp { drawLeg(ctx, sk.legs[.nf], pal.coat, outline: pal.pawRim) }
@@ -68,45 +69,63 @@ extension CatSim {
     /// Climbing the screen after the toy, seen from the front: left paws on the left, right paws on
     /// the right, reaching up in turn while the back feet push, tail hanging down the middle.
     private func drawClimbing(_ ctx: CGContext) {
-        let pal = Palette.current, s = scale, ph = climbPhase * .pi * 2
+        let pal = Palette.current, s = scale
+        // Where we are in the stroke: g gathers the back legs, r is the push, then the front paws re-hook.
+        let u = climbPhase, L = Self.climbStroke
+        let g = smoothstep(clamp01(u / 0.35)), r = smoothstep(clamp01((u - 0.35) / 0.25))
+        let squeeze = g - r                       // 1 when bunched up, 0 when stretched out
+        let rim: CGColor? = Self.limbRims ? pal.pawRim : nil
         // shadow on the floor far below, small and faint
         let k = clamp01(1 - max(0, pos.y - 74 * s - floorY) / 220)
         drawGroundShadow(ctx, center: CGPoint(x: pos.x, y: floorY + 1), rx: 26 * s * (0.6 + 0.4 * k), ry: 3.5 * s, alpha: 0.18 * k)
         drawTail(ctx)
         ctx.saveGState()
         ctx.translateBy(x: pos.x, y: pos.y)
-        ctx.rotate(by: sin(ph * 0.5) * 0.05 + lean.x)     // sways a little with each pull
+        ctx.rotate(by: sin(time * 1.3) * 0.03 + squeeze * 0.02 * climbLead + lean.x)   // a slight sway into each stroke
         ctx.scaleBy(x: s, y: s)
-        let bob = sin(ph) * 1.5
+        let bob: CGFloat = 0
         func limb(_ a: CGPoint, _ b: CGPoint, out: CGFloat, _ color: CGColor, upper: CGFloat, lower: CGFloat) {
             // the joint bows outwards, like elbows and knees seen from the front
             let m = CGPoint(x: (a.x + b.x) / 2 + out, y: (a.y + b.y) / 2)
+            if let rim {
+                line(ctx, a, m, upper + 2.4, rim); line(ctx, m, b, lower + 2.4, rim)
+                ctx.setFillColor(rim)
+                ctx.fillEllipse(in: CGRect(x: b.x - 6.6, y: b.y - 5.8, width: 13.2, height: 11.6))
+            }
             line(ctx, a, m, upper, color)
             line(ctx, m, b, lower, color)
             ctx.setFillColor(color)
             ctx.fillEllipse(in: CGRect(x: b.x - 5.4, y: b.y - 4.6, width: 10.8, height: 9.2))
         }
-        // back legs: alternate pushes against the screen
-        for side: CGFloat in [-1, 1] {
-            let push = sin(ph + (side < 0 ? .pi : 0))
-            limb(CGPoint(x: side * 8, y: -50 + bob), CGPoint(x: side * 16, y: -70 + push * 5), out: side * 6, pal.coat, upper: 11, lower: 8)
+        let hips = CGPoint(x: 0, y: -48 + 6 * squeeze), chest = CGPoint(x: 0, y: -22 + 2 * squeeze)
+        // back legs: both gather up under the body, then push together (feet stay put while it rises)
+        func backLegs() {
+            for side: CGFloat in [-1, 1] {
+                // tucks up partway (feet stay below the hips), knees out to the sides
+                let foot = CGPoint(x: side * (16 + 2 * squeeze), y: -70 + 14 * squeeze * (side == climbLead ? 1 : 0.9))
+                limb(CGPoint(x: side * 8, y: hips.y - 2), foot, out: side * (6 + 5 * squeeze), pal.coat, upper: 11, lower: 8)
+            }
         }
-        // body
-        bean(ctx, CGPoint(x: 0, y: -48 + bob), 14, CGPoint(x: 0, y: -22 + bob), 15, back: 0, belly: 0)
-        // front legs: reach up in turn; near the toy, the paw on its side stretches for it
+        if rim == nil { backLegs() }
+        bean(ctx, hips, 14, chest, 15, back: 0, belly: 0)
+        if rim != nil { backLegs() }      // in front of the belly, rimmed, so the gathered knees read
+        // front legs: hold while it pushes (so they bend as the body rises past them), then re-hook
+        // higher one after the other. At the top, the paw on the toy's side stretches for it.
         let reach = clamp01(climbReach.x)
         for side: CGFloat in [-1, 1] {
-            let pull = sin(ph + (side < 0 ? 0 : .pi))
-            // out beside the head, so the reaching reads
-            var paw = CGPoint(x: side * 27, y: 22 + pull * 8 + bob)
+            let order: CGFloat = side == climbLead ? 0 : 1
+            let hook = smoothstep(clamp01((u - 0.62 - 0.1 * order) / 0.2))
+            let low = r - hook                       // 1 right after the push: paw down by the chest
+            // hooked above the head; after the push they're down by its cheeks, still holding on
+            var paw = CGPoint(x: side * (27 - 2 * low), y: 30 + L * (hook - r))
             if side == climbReachSide && reach > 0 {
                 let up = CGPoint(x: side * 25, y: 42 + sin(time * 14) * 3)
                 paw = CGPoint(x: lerp(paw.x, up.x, reach), y: lerp(paw.y, up.y, reach))
             }
-            limb(CGPoint(x: side * 11, y: -20 + bob), paw, out: side * 6, pal.coat, upper: 10, lower: 8)
+            limb(CGPoint(x: side * 11, y: chest.y + 2 + bob), paw, out: side * (6 + 3 * low), pal.coat, upper: 10, lower: 8)
         }
         // head, face on, looking up at the toy
-        ctx.translateBy(x: 0, y: 6 + bob * 0.6)
+        ctx.translateBy(x: 0, y: 6 - 1.5 * squeeze)
         ctx.rotate(by: tilt.x * 0.5)
         ear(ctx, CGPoint(x: -23, y: 8), CGPoint(x: -8, y: 18), CGPoint(x: -19, y: 34), earL.x * 0.9)
         ear(ctx, CGPoint(x: 8, y: 18), CGPoint(x: 23, y: 8), CGPoint(x: 19, y: 34), -earR.x * 0.9)
