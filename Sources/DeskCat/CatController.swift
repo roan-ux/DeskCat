@@ -204,7 +204,9 @@ final class CatController: NSObject {
         let boxOrigin = CGPoint(x: (sim.box.x - inset.x).rounded(), y: (sim.box.y - inset.y).rounded())
         if boxWindow.frame.origin != boxOrigin { boxWindow.setFrameOrigin(boxOrigin) }
         boxView.show = sim.boxShow.x
-        let visible = sim.boxShow.x > 0.02 || sim.boxShow.target > 0
+        // Once the box has tucked away, keep it hidden while its spring settles: the spring
+        // overshoots past zero and bounces back a little, which used to re-show it for a few frames.
+        let visible = sim.boxShow.target > 0 || (boxWindow.isVisible && sim.boxShow.x > 0.02)
         if visible != boxWindow.isVisible {
             if visible {
                 boxWindow.orderFrontRegardless()

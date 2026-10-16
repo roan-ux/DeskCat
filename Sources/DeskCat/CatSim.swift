@@ -250,8 +250,15 @@ final class CatSim {
     /// Drains while it plays, refills slowly; when low it stops batting a toy that's lying still.
     var playEnergy: CGFloat = 1
     private var lastToyPlay: CGFloat = -10, lastToyHit: CGFloat = -10, nextLeap: CGFloat = 0
+    /// The box stays out until then after you take the toy out, so you can put it back.
+    private var boxLingerUntil: CGFloat = -10
+    /// The toy went back in the box mid-jump: head home as soon as it lands.
+    private var homePending = false
     var toyRadius: CGFloat { (toyKind?.radius ?? 12) * scale }
     var toyInBox: Bool { toyKind != nil && toy.place == .box }
+    /// Keep the box out while the cat's away: the toy's in it, you're holding the toy (and might
+    /// put it back), or you only just took it out.
+    private var boxNeeded: Bool { toyInBox || (toyKind != nil && toy.place == .held) || time < boxLingerUntil }
     var toySpeed: CGFloat { hypot(toy.vx, toy.vy) }
     var toyResting: Bool { toy.place == .free && toySpeed < 15 && toy.pos.y - toyRadius - floorY < 2 }
     /// Being waved about or flying: impossible to ignore.
@@ -686,6 +693,7 @@ final class CatSim {
 
     private func decideOut(_ per: Perception) -> Act {
         if time < dizzyUntil { return .dizzy }
+        if homePending { homePending = false; return .goHome }
         if visitPending { return .visit }
         if toyKind != nil && toy.place == .carried { return playEnergy < 0.35 ? .goHome : .trophy }
         if toyKind != nil && (toy.place == .free || toy.place == .held) {
@@ -910,6 +918,7 @@ final class CatSim {
             }
         }
         updateSwat(dt)
+        if !isHome && !held && act != .goHome && act != .air && boxShow.target > 0 && !boxNeeded { boxShow.target = 0 }
     }
 
     private func leaving(_ dt: CGFloat) {
@@ -919,9 +928,12 @@ final class CatSim {
             d.peekValue = lerp(1, 0.7, t / 0.24)
             placeInBox(d.peekValue)
         } else {
-            squash.target = 1; boxClip = nil
+            // Keep the rim clip on: the cat is still inside the box at the moment of launch, and
+            // inAir drops the clip once it has cleared the rim.
+            squash.target = 1
             let side: CGFloat = box.x + boxW + 70 < maxX ? 1 : -1
             outSince = time
+            if toyKind != nil && !toyInBox { boxLingerUntil = time + 6 }   // jumped out after the toy
             let bored = rnd(90, 240)
             // clear the rim comfortably, then drop to the floor beside the box
             launch(box.x + boxW / 2 + side * (boxW / 2 + 55 * scale), floorY,
@@ -941,7 +953,7 @@ final class CatSim {
         let overBox = abs(pos.x - (box.x + boxW / 2)) < boxW / 2 + 10
         let hidden = overBox && ((d.fromBox && pos.y < rimY) || (d.then == .box && velY < 0 && pos.y < rimY + 40 * scale))
         boxClip = hidden ? rimY : nil
-        if d.fromBox && velY < 0 && !toyInBox { boxShow.target = 0 }   // tuck the box away once the cat is out (unless the toy's in it)
+        if d.fromBox && velY < 0 && !boxNeeded { boxShow.target = 0 }   // tuck the box away once the cat is out
         if toyKind != nil && toy.place == .free && time - lastToyHit > 0.4 {
             let h = headWorld()
             if hypot(toy.pos.x - h.x, toy.pos.y - h.y) < 30 * scale + toyRadius {
@@ -1200,7 +1212,7 @@ final class CatSim {
             let rimY = box.y + boxRim
             if boxShow.x > 0.5 && toy.vy < 0 && toy.pos.x > box.x + 12 * scale && toy.pos.x < box.x + boxW - 12 * scale
                 && toy.pos.y < rimY + r && toy.pos.y > rimY - 25 * scale {
-                placeToyInBox(); return
+                toyBackInBox(); return
             }
             if toy.pos.y - r <= floorY {
                 toy.pos.y = floorY + r
@@ -1223,6 +1235,13 @@ final class CatSim {
         }
     }
 
+    /// You put the toy back in the box: the cat follows it home.
+    private func toyBackInBox() {
+        placeToyInBox()
+        guard !isHome && act != .goHome && !held else { return }
+        if committed { homePending = true } else { sleeping = false; go(.goHome) }
+    }
+
     /// Pointer pressed on the toy. Returns false if there's nothing to pick up.
     func grabToy() -> Bool {
         guard toyKind != nil else { return false }
@@ -1237,8 +1256,9 @@ final class CatSim {
         guard toy.place == .held else { return }
         let rimY = box.y + boxRim
         let overBox = toy.pos.x > box.x && toy.pos.x < box.x + boxW && toy.pos.y > rimY - 20 * scale && toy.pos.y < rimY + 70 * scale
-        if overBox && hypot(ptrVX, ptrVY) < 300 && boxShow.x > 0.5 { placeToyInBox(); return }
+        if overBox && hypot(ptrVX, ptrVY) < 300 && boxShow.x > 0.5 { toyBackInBox(); return }
         toy.place = .free
+        boxLingerUntil = max(boxLingerUntil, time + 4)    // a few seconds to fetch it and put it back
         toy.vx = clamp(ptrVX, -2600, 2600) * 0.9
         toy.vy = clamp(ptrVY, -1500, 2600) * 0.9
         toy.spin = -toy.vx / max(toyRadius, 1) * 0.4 + rnd(-3, 3)
@@ -1497,7 +1517,7 @@ final class CatSim {
             go(.air, ActData(landY: box.y + boxRim - 30 * scale, then: .box))
         } else {
             velX = clamp(ptrVX * 0.5, -500, 500); velY = clamp(ptrVY * 0.3, -200, 400)
-            boxShow.target = toyInBox ? 1 : 0
+            boxShow.target = boxNeeded ? 1 : 0
             outSince = time
             go(.air, ActData(bored: rnd(90, 240), then: .land))
             d.landY = floorY
