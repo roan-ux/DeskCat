@@ -219,8 +219,6 @@ final class CatSim {
     var climbLead: CGFloat = 1
     /// How far one stroke lifts the cat, in cat units (about how far the back feet can gather up).
     static let climbStroke: CGFloat = 22
-    /// Thin rims on limbs that cross in front of the body (held, climbing). Off until it's decided on.
-    static var limbRims = false
     /// 0...1, how far the paw nearest the toy reaches for it while climbing; -1/1 which side.
     var climbReach = Spring(0, f: 6, z: 0.6)
     var climbReachSide: CGFloat = 1

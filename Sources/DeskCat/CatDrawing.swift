@@ -35,7 +35,7 @@ extension CatSim {
         let back = lerp(-1.5, 2.5, clamp01(crouch.x)), belly = lerp(-2, -4, clamp01(lie.x))
         bean(ctx, hip, p.hr * vol, chest, p.cr * vol, back: back, belly: belly)
         line(ctx, chest, toWorld(p.kx, p.ky), 17 * s, pal.coat)   // neck
-        let heldRim = Self.limbRims && hold.x > 0.5 ? pal.pawRim : nil   // dangling legs cross the body
+        let heldRim = hold.x > 0.5 ? pal.pawRim : nil   // dangling legs cross the body: a thin rim keeps them readable
         drawLeg(ctx, sk.legs[.nb], pal.coat, outline: heldRim)
         let pawUp = max(paw.x, groom.x) > 0.3
         if !pawUp && (boxClip == nil || rim.x < 0.5) { drawLeg(ctx, sk.legs[.nf], pal.coat, outline: heldRim) }
@@ -74,7 +74,6 @@ extension CatSim {
         let u = climbPhase, L = Self.climbStroke
         let g = smoothstep(clamp01(u / 0.35)), r = smoothstep(clamp01((u - 0.35) / 0.25))
         let squeeze = g - r                       // 1 when bunched up, 0 when stretched out
-        let rim: CGColor? = Self.limbRims ? pal.pawRim : nil
         // shadow on the floor far below, small and faint
         let k = clamp01(1 - max(0, pos.y - 74 * s - floorY) / 220)
         drawGroundShadow(ctx, center: CGPoint(x: pos.x, y: floorY + 1), rx: 26 * s * (0.6 + 0.4 * k), ry: 3.5 * s, alpha: 0.18 * k)
@@ -87,11 +86,6 @@ extension CatSim {
         func limb(_ a: CGPoint, _ b: CGPoint, out: CGFloat, _ color: CGColor, upper: CGFloat, lower: CGFloat) {
             // the joint bows outwards, like elbows and knees seen from the front
             let m = CGPoint(x: (a.x + b.x) / 2 + out, y: (a.y + b.y) / 2)
-            if let rim {
-                line(ctx, a, m, upper + 2.4, rim); line(ctx, m, b, lower + 2.4, rim)
-                ctx.setFillColor(rim)
-                ctx.fillEllipse(in: CGRect(x: b.x - 6.6, y: b.y - 5.8, width: 13.2, height: 11.6))
-            }
             line(ctx, a, m, upper, color)
             line(ctx, m, b, lower, color)
             ctx.setFillColor(color)
@@ -106,9 +100,8 @@ extension CatSim {
                 limb(CGPoint(x: side * 8, y: hips.y - 2), foot, out: side * (6 + 5 * squeeze), pal.coat, upper: 11, lower: 8)
             }
         }
-        if rim == nil { backLegs() }
+        backLegs()
         bean(ctx, hips, 14, chest, 15, back: 0, belly: 0)
-        if rim != nil { backLegs() }      // in front of the belly, rimmed, so the gathered knees read
         // front legs: hold while it pushes (so they bend as the body rises past them), then re-hook
         // higher one after the other. At the top, the paw on the toy's side stretches for it.
         let reach = clamp01(climbReach.x)
