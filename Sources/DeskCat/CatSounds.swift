@@ -1,11 +1,20 @@
 // Everything the cat (and its box and toy) can sound like. The sounds are short recordings in
 // `Sounds/` (see Sounds/CREDITS.md), named `<prefix>-<n>.wav`; each play picks one of the takes
 // at random. Purring is separate and continuous (see CatAudio).
+//
+// How the sound is put together, borrowing from game audio practice:
+// - Every file is matched to the same perceived loudness (-20 LUFS, ITU-R BS.1770), so nothing
+//   is quiet or loud just because of how it was recorded.
+// - On top of that, a small mix offset per sound (`gainDB`) keeps the voice in front and the
+//   foley a little behind it. The offsets stay within a few dB so it still sounds even.
+// - Each play varies a little in pitch and level, so the same take never repeats exactly.
+// - Impacts get louder the harder they hit; sounds from inside the box are muffled; the purr
+//   dips while the cat meows.
 enum CatSound: CaseIterable {
     // the cat's voice
     case meow, chirp, wake
     // the box and the floor
-    case boxIn, boxSettle, boxOut, land
+    case boxIn, boxOut, land
     // toys
     case squeak, plush, bell, toyLand
 
@@ -16,7 +25,6 @@ enum CatSound: CaseIterable {
         case .chirp: return "chirp"
         case .wake: return "wake"
         case .boxIn: return "box-in"
-        case .boxSettle: return "box-settle"
         case .boxOut: return "box-out"
         case .land, .toyLand: return "land"
         case .squeak: return "squeak"
@@ -25,21 +33,36 @@ enum CatSound: CaseIterable {
         }
     }
 
-    /// Mix level relative to the user's volume. The files are already level-matched; this keeps
-    /// the voice in front and the foley in the background.
-    var gain: Float {
+    /// Mix offset in dB, relative to the voice.
+    var gainDB: Float {
         switch self {
-        case .meow, .chirp: return 1
-        case .wake: return 0.9
-        case .boxIn: return 0.8
-        case .boxSettle, .boxOut: return 0.7
-        case .land: return 0.55
-        case .squeak, .plush: return 0.7
-        case .bell: return 0.55
-        case .toyLand: return 0.35
+        case .meow, .chirp: return 0
+        case .wake: return -1
+        case .boxIn, .boxOut, .land: return -3
+        case .squeak, .plush: return -2
+        case .bell: return -3
+        case .toyLand: return -6
+        }
+    }
+
+    /// How far each play may drift in pitch (and speed), e.g. 0.05 = ±5%.
+    var pitchVariation: Float {
+        switch self {
+        case .meow, .chirp, .wake: return 0.035      // a cat's voice drifts a little, not a lot
+        case .bell: return 0.02
+        default: return 0.07                          // foley and squeaks can vary more
         }
     }
 
     /// Vocal sounds are rationed so the cat isn't chatty; foley isn't.
     var isVocal: Bool { self == .meow || self == .chirp || self == .wake }
+}
+
+/// One sound to play this frame.
+struct SoundEvent {
+    var sound: CatSound
+    /// 0...1: how hard it was (impacts get quieter when softer).
+    var level: Float = 1
+    /// Coming from inside the box: quieter and duller.
+    var muffled = false
 }

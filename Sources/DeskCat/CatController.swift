@@ -175,10 +175,11 @@ final class CatController: NSObject {
         var pan: Float = 0
         if let f = screen?.frame { pan = Float(max(-1, min(1, (head.x - f.midX) / (f.width / 2)))) * 0.85 }
         if on && volume > 0 {
-            for sound in sim.sounds { audio.play(sound, pan: pan, volume: volume) }
+            for event in sim.sounds { audio.play(event, pan: pan, volume: volume) }
         }
         sim.sounds.removeAll()
-        audio.update(purring: on ? Float(max(0, min(1, sim.purr.x))) : 0, intense: sim.purr.target > 0.8, pan: pan, volume: volume)
+        audio.update(purring: on ? Float(max(0, min(1, sim.purr.x))) : 0, intense: sim.purr.target > 0.8,
+                     muffled: sim.isHome && sim.boxClip != nil, pan: pan, volume: volume)
     }
 
     /// The cat lives on the screen its box is on; the floor is just above the Dock.

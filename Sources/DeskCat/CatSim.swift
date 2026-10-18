@@ -266,10 +266,10 @@ final class CatSim {
         toyKind != nil && ((toy.place == .held && ptrSpeed > 40) || (toy.place == .free && toySpeed > 60))
     }
     /// Sounds to play this frame; the controller drains it.
-    var sounds: [CatSound] = []
+    var sounds: [SoundEvent] = []
     private var lastVocal: CGFloat = -10
     private var lastSfx: [CatSound: CGFloat] = [:]
-    private var delayedSounds: [(CGFloat, CatSound)] = []
+    private var delayedSounds: [(CGFloat, SoundEvent)] = []
     /// Every 5 to 10 minutes it comes over to the pointer to say hi, even from the box.
     var visitAt: CGFloat = 0
     private var visitPending = false
@@ -492,7 +492,7 @@ final class CatSim {
         stepTail(dt, skeleton())
         stepToy(dt)
         if !delayedSounds.isEmpty {
-            for (at, sound) in delayedSounds where at <= time { sfx(sound) }
+            for (at, event) in delayedSounds where at <= time { play(event) }
             delayedSounds.removeAll { $0.0 <= time }
         }
         for i in hearts.indices {
@@ -626,15 +626,23 @@ final class CatSim {
     private func say(_ sound: CatSound, _ p: CGFloat = 1) {
         guard chance(p), time - lastVocal > 3, sounds.count < 4 else { return }
         lastVocal = time
-        sounds.append(sound)
+        sounds.append(SoundEvent(sound: sound, muffled: muffledNow))
     }
 
+    /// Down in the box, below the rim: the voice comes through the cardboard.
+    private var muffledNow: Bool { isHome && boxClip != nil && d.peek.x < 0.8 }
+
     /// Box, floor and toy sounds: not rationed like the voice, just not doubled up.
-    private func sfx(_ sound: CatSound, delay: CGFloat = 0) {
-        if delay > 0 { delayedSounds.append((time + delay, sound)); return }
-        guard lastSfx[sound].map({ time - $0 > 0.12 }) ?? true, sounds.count < 6 else { return }
-        lastSfx[sound] = time
-        sounds.append(sound)
+    private func sfx(_ sound: CatSound, level: CGFloat = 1, delay: CGFloat = 0) {
+        let event = SoundEvent(sound: sound, level: Float(clamp01(level)))
+        if delay > 0 { delayedSounds.append((time + delay, event)); return }
+        play(event)
+    }
+
+    private func play(_ event: SoundEvent) {
+        guard lastSfx[event.sound].map({ time - $0 > 0.12 }) ?? true, sounds.count < 6 else { return }
+        lastSfx[event.sound] = time
+        sounds.append(event)
     }
 
     private func toySound() { if let k = toyKind { sfx(k.sound) } }
@@ -982,7 +990,7 @@ final class CatSim {
         }
         if d.then == .box && velY < 0 && pos.y <= d.landY { landInBox(); return }
         if pos.y <= floorY && velY < 0 {
-            if velY < -520 { sfx(.land) }                  // a soft thump on bigger drops
+            if velY < -520 { sfx(.land, level: (-velY - 400) / 900) }   // a soft thump on bigger drops, harder ones louder
             pos.y = floorY; air = false; velY = 0
             squash.x = 0.7; squash.v = 0; squash.target = 1; lean.target = 0; leap.target = 0
             if d.then == .pin { pose(.crouch); go(.pin, ActData(bored: d.bored)) }
@@ -1090,7 +1098,7 @@ final class CatSim {
         squash.x = 0.8; squash.target = 1
         pose(.sit); sit.snap(1); crouch.snap(0); leap.snap(0)
         if toy.place == .carried { placeToyInBox() }     // drops it in the box
-        sfx(.boxIn); sfx(.boxSettle, delay: 0.3)
+        sfx(.boxIn)                                       // a soft cardboard thump as it lands inside
         var n = ActData(next: time + CGFloat.random(in: roamDelay))
         n.peek = Spring(0, f: 3, z: 0.55)
         n.peek.target = 1
@@ -1236,7 +1244,7 @@ final class CatSim {
             }
             if toy.pos.y - r <= floorY {
                 toy.pos.y = floorY + r
-                if toy.vy < -350 { sfx(kind == .bird ? .bell : .toyLand) }    // hits the floor
+                if toy.vy < -350 { sfx(kind == .bird ? .bell : .toyLand, level: (-toy.vy - 250) / 1200) }    // hits the floor
                 if toy.vy < -120 { toy.vy = -toy.vy * 0.42; toy.spin *= 0.7 } else { toy.vy = 0 }
                 toy.vx *= exp(-dt * (kind.rolls ? 1.6 : 4.5))
                 if abs(toy.vx) < 4 { toy.vx = 0 }
