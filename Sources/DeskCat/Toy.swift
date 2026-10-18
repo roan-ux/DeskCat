@@ -26,6 +26,15 @@ enum ToyKind: String, CaseIterable {
         }
     }
 
+    /// What it sounds like when it's grabbed, batted or caught.
+    var sound: CatSound {
+        switch self {
+        case .mouse, .miniShark: return .squeak
+        case .shark, .plushCat: return .plush
+        case .bird: return .bell
+        }
+    }
+
     /// Round toys roll along the floor; flat ones slide.
     var rolls: Bool { self == .bird || self == .plushCat }
 }

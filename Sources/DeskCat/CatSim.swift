@@ -268,6 +268,8 @@ final class CatSim {
     /// Sounds to play this frame; the controller drains it.
     var sounds: [CatSound] = []
     private var lastVocal: CGFloat = -10
+    private var lastSfx: [CatSound: CGFloat] = [:]
+    private var delayedSounds: [(CGFloat, CatSound)] = []
     /// Every 5 to 10 minutes it comes over to the pointer to say hi, even from the box.
     var visitAt: CGFloat = 0
     private var visitPending = false
@@ -489,6 +491,10 @@ final class CatSim {
         if !isHome && !held { pos.x = clamp(pos.x, minX, maxX) }
         stepTail(dt, skeleton())
         stepToy(dt)
+        if !delayedSounds.isEmpty {
+            for (at, sound) in delayedSounds where at <= time { sfx(sound) }
+            delayedSounds.removeAll { $0.0 <= time }
+        }
         for i in hearts.indices {
             hearts[i].age += dt
             hearts[i].y += 22 * dt
@@ -622,6 +628,16 @@ final class CatSim {
         lastVocal = time
         sounds.append(sound)
     }
+
+    /// Box, floor and toy sounds: not rationed like the voice, just not doubled up.
+    private func sfx(_ sound: CatSound, delay: CGFloat = 0) {
+        if delay > 0 { delayedSounds.append((time + delay, sound)); return }
+        guard lastSfx[sound].map({ time - $0 > 0.12 }) ?? true, sounds.count < 6 else { return }
+        lastSfx[sound] = time
+        sounds.append(sound)
+    }
+
+    private func toySound() { if let k = toyKind { sfx(k.sound) } }
 
     private func emitHeart() {
         let h = headWorld()
@@ -778,7 +794,7 @@ final class CatSim {
         if abs(spin) > 25 && per.dH < 520 * scale && !sleeping && time > dizzyUntil + 2 {
             spin = 0
             dizzyUntil = time + rnd(3.5, 5)
-            say(.mew, 0.7)      // "mew?"
+            say(.chirp, 0.6)    // "mrr?"
             if !isHome && !committed { swat = nil; paw.target = 0; wiggle.target = 0; enter(.dizzy); return }
         }
 
@@ -786,7 +802,7 @@ final class CatSim {
         if !isHome && !committed && a != .sleep {
             if per.startle { startle(); return }
             if petTime > 0.25 && a != .petted {
-                say(.mew, 0.5)
+                say(.chirp, 0.6)
                 go(.petted, ActData(bored: d.bored))
             } else if per.near && per.moving && !noticed && [.sit, .look, .wander, .groom, .loaf, .yawn, .stretch].contains(a) {
                 noticed = true
@@ -805,7 +821,7 @@ final class CatSim {
                 enter(.chase)
             }
         }
-        if [.sit, .look, .wander].contains(act) && chance(dt / 150) { say(chance(0.7) ? .meow : .mew) }
+        if [.sit, .look, .wander].contains(act) && chance(dt / 150) { say(.meow) }
         if !isHome && !committed && time > visitAt && [.sit, .look, .wander, .groom, .loaf, .yawn, .stretch].contains(act) {
             enter(.visit)
         }
@@ -824,6 +840,7 @@ final class CatSim {
             let caught = toyKind != nil && toy.place == .free && abs(toy.pos.x - (pos.x + fs * 30 * scale)) < 45 * scale
                 && toy.pos.y - toyRadius - floorY < 20 * scale
             if caught {
+                if t <= dt * 1.5 { toySound() }        // squeak as it lands on it
                 // pinned under the paws
                 toy.vx = 0; toy.spin = 0; toy.pos.x += (pos.x + fs * 32 * scale - toy.pos.x) * 0.3
                 lookAt(toy.pos.x, toy.pos.y)
@@ -933,6 +950,7 @@ final class CatSim {
             squash.target = 1
             let side: CGFloat = box.x + boxW + 70 < maxX ? 1 : -1
             outSince = time
+            sfx(.boxOut)                                                      // pushes off the cardboard
             if toyKind != nil && !toyInBox { boxLingerUntil = time + 6 }   // jumped out after the toy
             let bored = rnd(90, 240)
             // clear the rim comfortably, then drop to the floor beside the box
@@ -964,6 +982,7 @@ final class CatSim {
         }
         if d.then == .box && velY < 0 && pos.y <= d.landY { landInBox(); return }
         if pos.y <= floorY && velY < 0 {
+            if velY < -520 { sfx(.land) }                  // a soft thump on bigger drops
             pos.y = floorY; air = false; velY = 0
             squash.x = 0.7; squash.v = 0; squash.target = 1; lean.target = 0; leap.target = 0
             if d.then == .pin { pose(.crouch); go(.pin, ActData(bored: d.bored)) }
@@ -1034,12 +1053,12 @@ final class CatSim {
         if per.near && per.moving {
             d.stir += dt
             if d.stir > 0.05 && d.stir - dt <= 0.05 { earTwitch() }
-            if d.stir > 1.2 { sleeping = false; open.target = 1; enter(.yawn); return }
+            if d.stir > 1.2 { sleeping = false; open.target = 1; say(.wake, 0.5); enter(.yawn); return }
         } else {
             d.stir = max(0, d.stir - dt * 0.5)
         }
         // a nap, not hibernation: wakes up by itself and stretches
-        if d.dur > 0 && t > d.dur { sleeping = false; open.target = 1; say(.mew, 0.3); enter(chance(0.6) ? .stretch : .yawn) }
+        if d.dur > 0 && t > d.dur { sleeping = false; open.target = 1; lastVocal = -10; say(.wake, 0.55); enter(chance(0.6) ? .stretch : .yawn) }
     }
 
     private func goHome(_ dt: CGFloat) {
@@ -1071,6 +1090,7 @@ final class CatSim {
         squash.x = 0.8; squash.target = 1
         pose(.sit); sit.snap(1); crouch.snap(0); leap.snap(0)
         if toy.place == .carried { placeToyInBox() }     // drops it in the box
+        sfx(.boxIn); sfx(.boxSettle, delay: 0.3)
         var n = ActData(next: time + CGFloat.random(in: roamDelay))
         n.peek = Spring(0, f: 3, z: 0.55)
         n.peek.target = 1
@@ -1118,7 +1138,7 @@ final class CatSim {
         }
         // petting in the box
         if petTime > 0.25 {
-            if petTime - dt <= 0.25 { say(.mew, 0.4) }
+            if petTime - dt <= 0.25 { say(.chirp, 0.5) }
             happy.target = 1; purr.target = 1
             if t.truncatingRemainder(dividingBy: 0.7) < dt { emitHeart() }
         }
@@ -1169,7 +1189,7 @@ final class CatSim {
             pose(.stand)
             if moveToward(tx - side * 55 * scale, 120, dt, 8) {
                 d.ready = true; d.wait = 0; faceTo(ptrX, 1); emitHeart()
-                say(chance(0.45) ? .meow : .mew)
+                say(chance(0.5) ? .meow : .chirp)
             }
             if t > 25 { enter(.sit) }
         } else {
@@ -1216,6 +1236,7 @@ final class CatSim {
             }
             if toy.pos.y - r <= floorY {
                 toy.pos.y = floorY + r
+                if toy.vy < -350 { sfx(kind == .bird ? .bell : .toyLand) }    // hits the floor
                 if toy.vy < -120 { toy.vy = -toy.vy * 0.42; toy.spin *= 0.7 } else { toy.vy = 0 }
                 toy.vx *= exp(-dt * (kind.rolls ? 1.6 : 4.5))
                 if abs(toy.vx) < 4 { toy.vx = 0 }
@@ -1248,6 +1269,7 @@ final class CatSim {
         if toy.place == .box && boxShow.x < 0.5 { return false }
         toy.grab = CGVector(dx: ptrX - toy.pos.x, dy: ptrY - toy.pos.y)
         toy.place = .held      // also takes it out of the cat's mouth
+        toySound()
         return true
     }
 
@@ -1268,6 +1290,7 @@ final class CatSim {
     private func snatchToy() {
         toy.place = .carried; toy.vx = 0; toy.vy = 0
         happyUntil = time + 0.8
+        toySound(); say(.chirp, 0.4)
         lastToyPlay = time
     }
 
@@ -1306,6 +1329,7 @@ final class CatSim {
         toy.vx = dir * rnd(260, 520) * scale; toy.vy = rnd(140, 380); toy.spin = rnd(-14, 14)
         lastToyHit = time
         playEnergy = max(0, playEnergy - 0.025)
+        toySound()
     }
 
     /// Runs after the toy, leads it while it flies, leaps at it, bats it about, pounces on it.
