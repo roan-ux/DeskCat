@@ -1458,7 +1458,13 @@ window.DeskCat = { mount(stage, opts = {}) {
   function render() {
     ctx.setTransform(dpr, 0, 0, -dpr, 0, H * dpr);
     ctx.clearRect(0, 0, W, H);
-    drawBox(); drawCat(); drawToy();
+    // In the box the toy sits behind the cat, like the box; once it's out (held, flying or in the
+    // cat's mouth) it's drawn in front. (Same fix as the Mac app's toy window level.)
+    const toyBehind = toy.place === "box";
+    drawBox();
+    if (toyBehind) drawToy();
+    drawCat();
+    if (!toyBehind) drawToy();
   }
 
   // =====================================================================

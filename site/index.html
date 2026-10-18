@@ -40,7 +40,12 @@
   <div class="stage" id="stage"></div>
 
   <div class="controls">
-    <input class="name" id="name" type="text" value="Mochi" maxlength="14" aria-label="Name on the box" autocomplete="off" spellcheck="false">
+    <div class="name">
+      <input id="name" type="text" value="Mochi" maxlength="14" aria-label="Name on the box" autocomplete="off" spellcheck="false">
+      <button type="button" id="shuffle" title="Random name" aria-label="Random name">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+      </button>
+    </div>
     <div class="coats" role="group" aria-label="Coat colour"></div>
     <button class="btn btn-secondary" type="button" id="toggle">Let it out</button>
   </div>
@@ -103,7 +108,19 @@
     onChange: (label, home) => { toggle.textContent = home ? "Let it out" : "Call it back"; },
   });
   toggle.addEventListener("click", () => (deskcat.isHome() ? deskcat.letOut() : deskcat.callHome()));
-  name.addEventListener("input", () => { deskcat.setName(name.value); store.set("deskcat-name", name.value); });
+  const setName = (v) => { deskcat.setName(v); store.set("deskcat-name", v); };
+  name.addEventListener("input", () => setName(name.value));
+  // Roll a random name onto the box.
+  const NAMES = ["Mochi", "Miso", "Tofu", "Biscuit", "Pickle", "Noodle", "Pepper", "Luna", "Ziggy", "Olive", "Mango", "Pudding",
+    "Nugget", "Sushi", "Peanut", "Waffles", "Bean", "Pixel", "Cookie", "Ramen", "Basil", "Dumpling", "Maple", "Toast",
+    "Socks", "Boba", "Kiwi", "Tiger", "Muffin", "Nacho", "Pumpkin", "Sesame", "Oreo", "Juniper", "Clementine", "Gizmo"];
+  const shuffle = document.getElementById("shuffle");
+  shuffle.addEventListener("click", () => {
+    let next;
+    do next = NAMES[Math.floor(Math.random() * NAMES.length)]; while (next === name.value.trim());
+    name.value = next; setName(next);
+    shuffle.classList.remove("rolled"); void shuffle.offsetWidth; shuffle.classList.add("rolled");
+  });
 
   const coats = document.querySelector(".coats");
   for (const [color, label] of COATS) {
@@ -124,8 +141,7 @@
     .then((r) => (r.ok ? r.json() : null))
     .then((rel) => {
       if (!rel?.tag_name) return;
-      const date = new Date(rel.published_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      const link = Object.assign(document.createElement("a"), { href: rel.html_url, textContent: `${rel.tag_name} (${date})`, title: "What's new" });
+      const link = Object.assign(document.createElement("a"), { href: rel.html_url, textContent: rel.tag_name, title: "What's new" });
       document.getElementById("version").append(" · ", link);
     })
     .catch(() => {});
