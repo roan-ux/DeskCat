@@ -588,7 +588,7 @@ final class CatSim {
         case .happy: v = (1.2, 0.14, 0.08, 1.6, 1)
         case .hunt: v = (-0.3, 0.05, 0.07, 7, 1)
         case .alert: v = (-0.15, 0.3, 0.05, 3, 1)
-        case .scared: v = (1.0, 0.25, 0.04, 2, 1.9)
+        case .scared: v = (1.0, 0.25, 0.04, 2, 1.5)
         case .sleep: v = (-1.35, -0.42, 0, 1, 1)
         case .box: v = (-0.6, 0.35, 0.1, 1.4, 1)
         }
@@ -1008,7 +1008,7 @@ final class CatSim {
         swat = nil; paw.target = 0
         let away: CGFloat = sgn(pos.x - ptrX) == 0 ? 1 : sgn(pos.x - ptrX)
         velX = away * 220; velY = 520; air = true; squash.x = 1.25; leap.target = 0.6
-        facing.target = -away; tailPuff.target = 1.9
+        facing.target = -away; tailPuff.target = 1.5
         go(.startle, ActData(bored: d.bored))
     }
 

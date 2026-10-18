@@ -182,14 +182,46 @@ extension CatSim {
         ctx.fillEllipse(in: CGRect(x: fx - 5.2 * s, y: fy - 4.2 * s, width: 10.4 * s, height: 8.4 * s))
     }
 
+    /// The tail as one smooth tapered shape: a curve through the chain's points, with an outline
+    /// that narrows evenly from root to tip (and widens a little right at the root, so it grows
+    /// out of the body). Drawing it as separate thick strokes showed every joint as a bump.
     private func drawTail(_ ctx: CGContext) {
         let n = tail.count, puff = tailPuff.x
         guard n > 1 else { return }
+        // smooth centreline: Catmull-Rom through the chain, a few points per link
+        var pts: [CGPoint] = []
         for i in 0..<(n - 1) {
-            // a thicker base that flares into the body, so the tail looks like it grows out of it
-            let flare: CGFloat = i == 0 ? 1.5 : (i == 1 ? 1.15 : 1)
-            line(ctx, tail[i], tail[i + 1], lerp(7.5, 4.6, CGFloat(i) / CGFloat(n - 1)) * flare * puff * scale, Palette.current.coat)
+            let p0 = tail[max(i - 1, 0)], p1 = tail[i], p2 = tail[i + 1], p3 = tail[min(i + 2, n - 1)]
+            for k in 0..<4 {
+                let t = CGFloat(k) / 4, t2 = t * t, t3 = t2 * t
+                func cr(_ a: CGFloat, _ b: CGFloat, _ c: CGFloat, _ d: CGFloat) -> CGFloat {
+                    0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (3 * b - a - 3 * c + d) * t3)
+                }
+                pts.append(CGPoint(x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y)))
+            }
         }
+        pts.append(tail[n - 1])
+        let m = pts.count
+        func halfWidth(_ j: Int) -> CGFloat {
+            let u = CGFloat(j) / CGFloat(m - 1)
+            let root = 1 + 0.3 * smoothstep(clamp01(1 - u / 0.18))      // gentle flare only at the very root
+            return lerp(7.5, 4.6, u) * root * puff * scale / 2
+        }
+        var left: [CGPoint] = [], right: [CGPoint] = []
+        for j in 0..<m {
+            let a = pts[max(j - 1, 0)], b = pts[min(j + 1, m - 1)]
+            let dx = b.x - a.x, dy = b.y - a.y, len = max(hypot(dx, dy), 0.0001)
+            let nx = -dy / len, ny = dx / len, h = halfWidth(j)
+            left.append(CGPoint(x: pts[j].x + nx * h, y: pts[j].y + ny * h))
+            right.append(CGPoint(x: pts[j].x - nx * h, y: pts[j].y - ny * h))
+        }
+        let coat = Palette.current.coat
+        ctx.setFillColor(coat)
+        ctx.addLines(between: left + right.reversed())
+        ctx.closePath()
+        ctx.fillPath()
+        fillCircle(ctx, pts[m - 1], halfWidth(m - 1), coat)    // rounded tip
+        fillCircle(ctx, pts[0], halfWidth(0), coat)            // root, under the body
     }
 
     /// Rounded head: a superellipse, slightly wider and flatter at the cheeks.
