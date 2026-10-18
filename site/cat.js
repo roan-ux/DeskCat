@@ -3,8 +3,8 @@
    cat on the site behaves like the real one. World coordinates are CSS pixels with y up and the
    floor at 0. Everything stays inside the stage: the cat, the toy and the box.
 
-   DeskCat.mount(stage, { name, coat, toy, onChange })
-     -> { setName, setCoat, setToy, letOut, callHome, isHome, drawToyIcon } */
+   DeskCat.mount(stage, { name, coat, toy, muted, sounds, onChange })
+     -> { setName, setCoat, setToy, setMuted, letOut, callHome, isHome, drawToyIcon } */
 window.DeskCat = { mount(stage, opts = {}) {
   // =====================================================================
   //  Math
@@ -143,6 +143,104 @@ window.DeskCat = { mount(stage, opts = {}) {
   const toyExciting = () => toyKind != null && ((toy.place === "held" && ptrSpeed > 40) || (toy.place === "free" && toySpeed() > 60));
   const isHome = () => act === "inBox" || act === "leaving";
   const committed = () => swat != null || ["leaving", "air", "held", "startle", "land", "pin", "dizzy", "climb"].includes(act);
+
+  // =====================================================================
+  //  Sound: the Mac app's recordings (CatSounds.swift, CatAudio.swift) through Web Audio.
+  //  Browsers only allow sound after you click or tap the page, so it starts then.
+  // =====================================================================
+  const SOUNDS = {   // file prefix, number of takes, mix offset (dB), pitch drift, vocal
+    meow: ["meow", 3, 0, 0.035, true], chirp: ["chirp", 1, 0, 0.035, true], wake: ["wake", 1, -1, 0.035, true],
+    boxIn: ["box-in", 4, -3, 0.07], boxOut: ["box-out", 3, -3, 0.07], land: ["land", 1, -3, 0.07], claw: ["claw", 5, -5, 0.07],
+    squeak: ["squeak", 1, -2, 0.07], plush: ["plush", 4, -2, 0.07], bell: ["bell", 1, -3, 0.02], toyLand: ["land", 1, -6, 0.07],
+  };
+  const TOY_SOUND = { mouse: "squeak", miniShark: "squeak", shark: "plush", plushCat: "plush", bird: "bell" };
+  const soundBase = opts.sounds || "sounds/";
+  const audio = { ctx: null, master: null, buffers: {}, purr: null, purrGain: null, purrMuffle: null, purrLevel: 0,
+                  lastTake: {}, duckUntil: 0, muted: !!opts.muted, loading: null };
+  let lastVocal = -10, lastSfx = {}, delayed = [];
+  function audioStart() {
+    if (audio.muted) return;
+    if (!audio.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audio.ctx = new AC();
+      audio.master = audio.ctx.createGain(); audio.master.connect(audio.ctx.destination);
+    }
+    if (audio.ctx.state === "suspended") audio.ctx.resume();
+    if (!audio.loading) {
+      const load = (name) => fetch(soundBase + name + ".wav").then((r) => r.arrayBuffer())
+        .then((b) => new Promise((ok, no) => audio.ctx.decodeAudioData(b, ok, no))).catch(() => null);
+      const files = new Set(Object.values(SOUNDS).flatMap(([pre, n]) => Array.from({ length: n }, (_, i) => `${pre}-${i + 1}`)));
+      audio.loading = Promise.all([...files, "purr-1"].map((f) => load(f).then((b) => { if (b) audio.buffers[f] = b; })));
+    }
+  }
+  for (const ev of ["pointerdown", "keydown", "touchend"]) window.addEventListener(ev, audioStart, { passive: true });
+  function soundPan() { return clamp((pos.x - W / 2) / (W / 2), -1, 1) * 0.85; }
+  function chain(muffled, pan, gain) {   // gain → (low-pass if muffled) → pan → master
+    const c = audio.ctx, g = c.createGain(); g.gain.value = gain;
+    let node = g;
+    if (muffled) { const f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1800; node.connect(f); node = f; }
+    if (c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = pan; node.connect(p); node = p; }
+    node.connect(audio.master);
+    return g;
+  }
+  function playSound(ev) {
+    if (audio.muted || !audio.ctx || audio.ctx.state !== "running") return;
+    const [pre, n, gainDB, drift, vocal] = SOUNDS[ev.sound];
+    let i = Math.floor(Math.random() * n);
+    if (n > 1 && i === audio.lastTake[ev.sound]) i = (i + 1) % n;
+    audio.lastTake[ev.sound] = i;
+    const buf = audio.buffers[`${pre}-${i + 1}`];
+    if (!buf) return;
+    // mix offset, ±1 dB of randomness, softer for gentler impacts, quieter through the box
+    let db = gainDB + rnd(-1, 1) + 20 * Math.log10(0.35 + 0.65 * clamp01(ev.level ?? 1));
+    if (ev.muffled) db -= 4;
+    const src = audio.ctx.createBufferSource();
+    src.buffer = buf; src.playbackRate.value = 1 + rnd(-drift, drift);
+    src.connect(chain(ev.muffled, soundPan(), 0.8 * Math.pow(10, db / 20)));
+    src.start();
+    if (vocal) audio.duckUntil = audio.ctx.currentTime + buf.duration;
+  }
+  /** Down in the box, below the rim: the voice comes through the cardboard. */
+  const muffledNow = () => isHome() && boxClip != null && d.peek.x < 0.8;
+  /** The cat's voice, with probability `p`, kept a few seconds apart so it isn't chatty. */
+  function say(sound, p = 1) {
+    if (!chance(p) || time - lastVocal <= 3) return;
+    lastVocal = time;
+    playSound({ sound, muffled: muffledNow() });
+  }
+  /** Box, floor and toy sounds: not rationed like the voice, just not doubled up. */
+  function sfx(sound, level = 1, delay = 0) {
+    if (delay > 0) { delayed.push([time + delay, sound, level]); return; }
+    if (time - (lastSfx[sound] ?? -1) <= 0.12) return;
+    lastSfx[sound] = time;
+    playSound({ sound, level: clamp01(level) });
+  }
+  function toySound() { if (toyKind) sfx(TOY_SOUND[toyKind]); }
+  /** Every frame: the purr follows how hard the cat is purring, and dips under its voice. */
+  function updateAudio() {
+    for (const [at, sound, level] of delayed) if (at <= time) sfx(sound, level);
+    delayed = delayed.filter(([at]) => at > time);
+    if (!audio.ctx || audio.ctx.state !== "running") return;
+    const muffled = isHome() && boxClip != null;
+    let want = audio.muted ? 0 : clamp01(purr.x) * (purr.target > 0.8 ? 0.8 : 0.5);
+    if (audio.ctx.currentTime < audio.duckUntil) want *= 0.5;
+    if (muffled) want *= 0.65;
+    audio.purrLevel += (want - audio.purrLevel) * 0.08;
+    if (want > 0.01 && !audio.purr && audio.buffers["purr-1"]) {
+      const c = audio.ctx;
+      audio.purr = c.createBufferSource(); audio.purr.buffer = audio.buffers["purr-1"]; audio.purr.loop = true;
+      audio.purrGain = c.createGain(); audio.purrGain.gain.value = 0;
+      audio.purrMuffle = c.createBiquadFilter(); audio.purrMuffle.type = "lowpass";
+      audio.purr.connect(audio.purrGain).connect(audio.purrMuffle).connect(audio.master);
+      audio.purr.start();
+    }
+    if (audio.purr) {
+      audio.purrGain.gain.value = audio.purrLevel;
+      audio.purrMuffle.frequency.value = muffled ? 1800 : 20000;
+      if (audio.purrLevel < 0.002 && want < 0.001) { audio.purr.stop(); audio.purr = null; }
+    }
+  }
 
   // =====================================================================
   //  Skeleton
@@ -420,7 +518,7 @@ window.DeskCat = { mount(stage, opts = {}) {
       case "stalk": n.dur = 7; break;
       case "visit": n.dur = rnd(4, 8); n.tiltSign = chance(0.5) ? 1 : -1; visitPending = false; visitAt = time + rnd(...WEB.visit); break;
       case "chase": n.dur = rnd(20, 35); break;
-      case "climb": n.dur = rnd(10, 14); n.x = 0; n.landY = 0; climbPhase = 0; break;
+      case "climb": n.dur = rnd(10, 14); n.x = 0; n.landY = 0; climbPhase = 0; sfx("claw"); break;   // grabs on
       case "trophy": { const side = chance(0.5) ? 1 : -1; n.x = clamp(pos.x + side * rnd(150, 350) * scale, minX, maxX); n.dur = rnd(1.2, 2.2); break; }
       case "zoomies": {
         let side = chance(0.5) ? 1 : -1;
@@ -462,12 +560,13 @@ window.DeskCat = { mount(stage, opts = {}) {
     // spun round in fast circles: dizzy, wherever it is
     if (Math.abs(spin) > 25 && per.dH < 520 * scale && !sleeping && time > dizzyUntil + 2) {
       spin = 0; dizzyUntil = time + rnd(3.5, 5);
+      say("chirp", 0.6);   // "mrr?"
       if (!isHome() && !committed()) { swat = null; paw.target = 0; wiggle.target = 0; enter("dizzy"); return; }
     }
     // interrupts
     if (!isHome() && !committed() && a !== "sleep") {
       if (per.startle) { startle(); return; }
-      if (petTime > 0.25 && a !== "petted") go("petted", newD({ bored: d.bored }));
+      if (petTime > 0.25 && a !== "petted") { say("chirp", 0.6); go("petted", newD({ bored: d.bored })); }
       else if (per.near && per.moving && !noticed && IDLE_ACTS.includes(a)) {
         noticed = true;
         if (chance(0.35 + 0.55 * playful)) { earL.v += 8; earR.v += 8; enter("watch"); }
@@ -480,6 +579,7 @@ window.DeskCat = { mount(stage, opts = {}) {
       else if (act === "sleep") { if (hypot(toy.pos.x - pos.x, toy.pos.y - pos.y) < 500 * scale && chance(dt * 1.5)) { sleeping = false; enter("chase"); } }
       else if (!isHome()) enter("chase");
     }
+    if (["sit", "look", "wander"].includes(act) && chance(dt / 60)) say("meow");   // (every ~2.5 min on the Mac)
     if (!isHome() && !committed() && time > visitAt && IDLE_ACTS.includes(act)) enter("visit");
 
     switch (act) {
@@ -492,7 +592,7 @@ window.DeskCat = { mount(stage, opts = {}) {
         const fs = facing.target >= 0 ? 1 : -1;
         const caught = toyKind != null && toy.place === "free" && Math.abs(toy.pos.x - (pos.x + fs * 30 * scale)) < 45 * scale
           && toy.pos.y - toyRadius() - floorY < 20 * scale;
-        if (caught) { toy.vx = 0; toy.spin = 0; toy.pos.x += (pos.x + fs * 32 * scale - toy.pos.x) * 0.3; lookAt(toy.pos.x, toy.pos.y); }
+        if (caught) { if (t <= dt * 1.5) toySound(); toy.vx = 0; toy.spin = 0; toy.pos.x += (pos.x + fs * 32 * scale - toy.pos.x) * 0.3; lookAt(toy.pos.x, toy.pos.y); }
         else lookAt(ptrX, ptrY);
         if (t > 0.6) {
           paw.target = 0; playful = Math.max(0.2, playful - 0.1);
@@ -580,6 +680,7 @@ window.DeskCat = { mount(stage, opts = {}) {
       squash.target = 1;
       const side = box.x + boxW() + 70 * scale < maxX ? 1 : -1;
       outSince = time;
+      sfx("boxOut");   // pushes off the cardboard
       if (toyKind != null && !toyInBox()) boxLingerUntil = time + 6;   // jumped out after the toy
       const bored = rnd(...WEB.bored);
       launch(box.x + boxW() / 2 + side * (boxW() / 2 + 55 * scale), floorY, box.y + boxRim() + 40 * scale - Math.max(pos.y, floorY), "land");
@@ -607,6 +708,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     }
     if (d.then === "box" && velY < 0 && pos.y <= d.landY) { landInBox(); return; }
     if (pos.y <= floorY && velY < 0) {
+      if (velY < -520) sfx("land", (-velY - 400) / 900);   // a soft thump on bigger drops
       pos.y = floorY; air = false; velY = 0;
       squash.x = 0.7; squash.v = 0; squash.target = 1; lean.target = 0; leap.target = 0;
       if (d.then === "pin") { pose("crouch"); go("pin", newD({ bored: d.bored })); }
@@ -661,10 +763,10 @@ window.DeskCat = { mount(stage, opts = {}) {
     if (per.near && per.moving) {
       d.stir += dt;
       if (d.stir > 0.05 && d.stir - dt <= 0.05) earTwitch();
-      if (d.stir > 1.2) { sleeping = false; open.target = 1; enter("yawn"); return; }
+      if (d.stir > 1.2) { sleeping = false; open.target = 1; say("wake", 0.5); enter("yawn"); return; }
     } else d.stir = Math.max(0, d.stir - dt * 0.5);
     // a nap, not hibernation: wakes up by itself and stretches
-    if (d.dur > 0 && t > d.dur) { sleeping = false; open.target = 1; enter(chance(0.6) ? "stretch" : "yawn"); }
+    if (d.dur > 0 && t > d.dur) { sleeping = false; open.target = 1; lastVocal = -10; say("wake", 0.55); enter(chance(0.6) ? "stretch" : "yawn"); }
   }
   function goHome(dt) {
     boxShow.target = 1;
@@ -690,6 +792,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     facing.target = sgn1(facing.target); squash.x = 0.8; squash.target = 1;
     pose("sit"); sit.snap(1); crouch.snap(0); leap.snap(0);
     if (toy.place === "carried") placeToyInBox();   // drops it in the box
+    sfx("boxIn");   // a soft cardboard thump as it lands inside
     const n = newD({ next: time + rnd(...WEB.roamDelay) });
     n.peek = new Spring(0, 3, 0.55); n.peek.target = 1;
     go("inBox", n);
@@ -723,7 +826,10 @@ window.DeskCat = { mount(stage, opts = {}) {
       lean.target = sin(time * 2.6) * 0.09; tilt.target = sin(time * 3.3) * 0.3; pitch.target = cos(time * 3.3) * 0.12;
       earL.target = 0.45; earR.target = 0.2;
     } else lean.target = 0;
-    if (petTime > 0.25) { happy.target = 1; purr.target = 1; if (fmod(t, 0.7) < dt) emitHeart(); }
+    if (petTime > 0.25) {
+      if (petTime - dt <= 0.25) say("chirp", 0.5);
+      happy.target = 1; purr.target = 1; if (fmod(t, 0.7) < dt) emitHeart();
+    }
     const facingPtr = Math.abs(ptrX - pos.x) < 12 * scale || (sgn(ptrX - pos.x) === sgn(facing.x) && Math.abs(facing.x) > 0.8);
     if (!swat && !dizzyNow && facingPtr && per.dH < 75 * scale && per.dH > 30 * scale && per.moving && ptrSpeed < 1500 && d.peek.x > 0.9 && chance(dt * 1.6)) {
       startSwat({ x: ptrX, y: ptrY });
@@ -758,7 +864,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     mood("happy"); lookAt(ptrX, ptrY);
     if (!d.ready) {
       pose("stand");
-      if (moveToward(clamp(tx - side * 55 * scale, minX, maxX), 120, dt, 8)) { d.ready = true; d.wait = 0; faceTo(ptrX, 1); emitHeart(); }
+      if (moveToward(clamp(tx - side * 55 * scale, minX, maxX), 120, dt, 8)) { d.ready = true; d.wait = 0; faceTo(ptrX, 1); emitHeart(); say(chance(0.5) ? "meow" : "chirp"); }
       if (t > 25) enter("sit");
     } else {
       pose("sit"); brake(dt); faceTo(ptrX, 10);
@@ -801,6 +907,7 @@ window.DeskCat = { mount(stage, opts = {}) {
             && toy.pos.y < rimY + r && toy.pos.y > rimY - 25 * scale) { toyBackInBox(); return; }   // dropped into the box
         if (toy.pos.y - r <= floorY) {
           toy.pos.y = floorY + r;
+          if (toy.vy < -350) sfx(toyKind === "bird" ? "bell" : "toyLand", (-toy.vy - 250) / 1200);   // hits the floor
           if (toy.vy < -120) { toy.vy = -toy.vy * 0.42; toy.spin *= 0.7; } else toy.vy = 0;
           toy.vx *= Math.exp(-dt * (TOYS[toyKind].rolls ? 1.6 : 4.5));
           if (Math.abs(toy.vx) < 4) toy.vx = 0;
@@ -827,6 +934,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     if (toy.place === "box" && boxShow.x < 0.5) return false;
     toy.grab = { dx: ptrX - toy.pos.x, dy: ptrY - toy.pos.y };
     toy.place = "held";   // also takes it out of the cat's mouth
+    toySound();
     return true;
   }
   /** Let go of the toy: it flies off with the pointer's speed, or drops into the box if it's over it. */
@@ -841,7 +949,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     toy.vy = clamp(ptrVY, -1500, 2600) * 0.9;
     toy.spin = -toy.vx / Math.max(toyRadius(), 1) * 0.4 + rnd(-3, 3);
   }
-  function snatchToy() { toy.place = "carried"; toy.vx = 0; toy.vy = 0; happyUntil = time + 0.8; lastToyPlay = time; }
+  function snatchToy() { toy.place = "carried"; toy.vx = 0; toy.vy = 0; happyUntil = time + 0.8; lastToyPlay = time; toySound(); say("chirp", 0.4); }
   /** Trots off with the toy in its mouth, sits with it, then drops it to play again or takes it home. */
   function trophy(dt) {
     if (toy.place !== "carried") { enter(decideOut(perceiveQuiet())); return; }
@@ -864,6 +972,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     toy.place = "free";
     toy.vx = dir * rnd(260, 520) * scale; toy.vy = rnd(140, 380); toy.spin = rnd(-14, 14);
     lastToyHit = time; playEnergy = Math.max(0, playEnergy - 0.025);
+    toySound();
   }
   /** Runs after the toy, leads it while it flies, leaps at it, bats it about, pounces on it. */
   function chase(dt) {
@@ -922,7 +1031,9 @@ window.DeskCat = { mount(stage, opts = {}) {
     const stroke = CLIMB_STROKE * scale;
     const moreToGo = toy.place === "held" && t < d.dur && want > d.landY + 4 * scale;
     if (moreToGo || climbPhase > 0) {
+      const was = climbPhase;
       climbPhase += dt / 0.5;
+      if (was < 0.35 && climbPhase >= 0.35) sfx("claw", rnd(0.7, 1));   // claws dig in as it pushes
       if (climbPhase >= 1) { climbPhase = 0; d.landY += stroke; climbLead = -climbLead; }
     }
     if (!moreToGo && climbPhase === 0 && want < d.landY - stroke * 1.5) d.landY = Math.max(0, d.landY - 60 * scale * dt);   // toy lowered: slides down a bit
@@ -1010,6 +1121,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     swat = null; paw.target = 0; happy.target = 0; purr.target = 0;
     facing.target = sgn1(facing.x);
     heldGesture = chance(0.5) ? "reach" : "paddle"; heldNext = time + rnd(0.8, 1.6);   // first reaction to being lifted
+    if (chance(0.5)) { lastVocal = -10; say("meow"); }
     go("held");
   }
   function release() {
@@ -1539,6 +1651,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     const now = performance.now() / 1000, dt = Math.min(now - last, 1 / 12);
     last = now;
     step(dt);
+    updateAudio();
     render();
     const label = statusLabel(), home = isHome();
     if (label !== lastLabel || home !== lastHome) { lastLabel = label; lastHome = home; opts.onChange?.(label, home); }
@@ -1569,9 +1682,10 @@ window.DeskCat = { mount(stage, opts = {}) {
   requestAnimationFrame(frame);
 
   // for poking at it from the console
-  window.__deskcat = { get act() { return act; }, pos, toy, box, get W() { return W; }, get H() { return H; } };
+  window.__deskcat = { get act() { return act; }, pos, toy, box, audio, get W() { return W; }, get H() { return H; } };
   return {
     isHome, letOut, callHome, setToy, setCoat, drawToyIcon,
+    setMuted(m) { audio.muted = m; if (audio.master) audio.master.gain.value = m ? 0 : 1; if (!m) audioStart(); },
     setName(n) { catName = String(n).trim().slice(0, 14); },
   };
 } };

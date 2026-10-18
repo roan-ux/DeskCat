@@ -1,9 +1,9 @@
-# Publishes the website in site/ to GitHub Pages whenever it changes on main.
+# Publishes the website in site/ (plus the app's Sounds/) to GitHub Pages whenever they change on main.
 name: Website
 on:
   push:
     branches: [main]
-    paths: [site/**, .github/workflows/pages.yml]
+    paths: [site/**, Sounds/**, .github/workflows/pages.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,6 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Add the cat's sounds (the same recordings as the app)
+        run: rm -rf site/sounds && cp -R Sounds site/sounds
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
