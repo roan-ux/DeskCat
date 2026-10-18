@@ -802,6 +802,7 @@ final class CatSim {
         if abs(spin) > 25 && per.dH < 520 * scale && !sleeping && time > dizzyUntil + 2 {
             spin = 0
             dizzyUntil = time + rnd(3.5, 5)
+            sfx(.dizzy)         // cartoon birdies tweeting round its head; they fade out as it comes round
             say(.chirp, 0.6)    // "mrr?"
             if !isHome && !committed { swat = nil; paw.target = 0; wiggle.target = 0; enter(.dizzy); return }
         }

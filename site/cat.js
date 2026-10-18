@@ -150,6 +150,7 @@ window.DeskCat = { mount(stage, opts = {}) {
   // =====================================================================
   const SOUNDS = {   // file prefix, number of takes, mix offset (dB), pitch drift, vocal
     meow: ["meow", 3, 0, 0.035, true], chirp: ["chirp", 1, 0, 0.035, true], wake: ["wake", 1, -1, 0.035, true],
+    dizzy: ["dizzy", 1, -4, 0.04],
     boxIn: ["box-in", 4, -3, 0.07], boxOut: ["box-out", 3, -3, 0.07], land: ["land", 1, -3, 0.07], claw: ["claw", 5, -5, 0.07],
     squeak: ["squeak", 1, -2, 0.07], plush: ["plush", 4, -2, 0.07], bell: ["bell", 1, -3, 0.02], toyLand: ["land", 1, -6, 0.07],
   };
@@ -561,6 +562,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     // spun round in fast circles: dizzy, wherever it is
     if (Math.abs(spin) > 25 && per.dH < 520 * scale && !sleeping && time > dizzyUntil + 2) {
       spin = 0; dizzyUntil = time + rnd(3.5, 5);
+      sfx("dizzy");   // cartoon birdies tweeting round its head
       say("chirp", 0.6);   // "mrr?"
       if (!isHome() && !committed()) { swat = null; paw.target = 0; wiggle.target = 0; enter("dizzy"); return; }
     }
