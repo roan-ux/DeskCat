@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="sq"><path d="M32 0C9.6 0 0 9.6 0 32s9.6 32 32 32 32-9.6 32-32S54.4 0 32 0Z"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf7f0"/><stop offset="1" stop-color="#f1e9dc"/></linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d3aa77"/><stop offset="1" stop-color="#bd8f59"/></linearGradient>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect width="64" height="64" fill="url(#bg)"/>
+    <!-- ears and head peeking over the rim -->
+    <path d="M16.5 32 15 15.5l11 7.5ZM47.5 32 49 15.5l-11 7.5Z" fill="#1d1d1f"/>
+    <ellipse cx="32" cy="34" rx="18.5" ry="15" fill="#1d1d1f"/>
+    <ellipse cx="25" cy="33.5" rx="5" ry="5.4" fill="#fff"/>
+    <ellipse cx="39" cy="33.5" rx="5" ry="5.4" fill="#fff"/>
+    <path d="M26 29.6q2.3 3.9 0 7.8-2.3-3.9 0-7.8ZM40 29.6q2.3 3.9 0 7.8-2.3-3.9 0-7.8Z" fill="#121214"/>
+    <circle cx="26.9" cy="35.6" r="0.9" fill="#fff"/><circle cx="40.9" cy="35.6" r="0.9" fill="#fff"/>
+    <!-- the box -->
+    <rect x="0" y="42" width="64" height="22" fill="url(#card)"/>
+    <rect x="0" y="42" width="64" height="2.5" fill="#8a6234" opacity="0.25"/>
+    <ellipse cx="21" cy="43.5" rx="3.6" ry="2.6" fill="#1d1d1f"/><ellipse cx="43" cy="43.5" rx="3.6" ry="2.6" fill="#1d1d1f"/>
+  </g>
+  <path d="M32 .5C9.9.5.5 9.9.5 32S9.9 63.5 32 63.5 63.5 54.1 63.5 32 54.1.5 32 .5Z" fill="none" stroke="#000" stroke-opacity="0.08"/>
+</svg>

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DeskCat</title>
+<meta name="description" content="A tiny cat that lives on your Mac desktop. It peeks out of its box, follows your pointer, plays with its toy and wanders off to explore.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://roan-ux.github.io/DeskCat/">
+<meta property="og:title" content="DeskCat">
+<meta property="og:description" content="A little cat for your desk. Free for Mac.">
+<meta property="og:image" content="https://roan-ux.github.io/DeskCat/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DeskCat">
+<meta name="twitter:description" content="A little cat for your desk. Free for Mac.">
+<meta name="twitter:image" content="https://roan-ux.github.io/DeskCat/og.png">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Nunito:wght@900&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="logo" href="./" aria-label="DeskCat home"><img src="logo.svg" alt="" width="34" height="34">DeskCat</a>
+  <nav class="nav">
+    <a href="about.html">About</a>
+    <button type="button" data-download>Download</button>
+  </nav>
+</header>
+
+<main class="home">
+  <div class="intro">
+    <h1>A little cat for your <mark>desk</mark>.</h1>
+    <p id="hint">It lives in a box on your Mac. Move your pointer near it, or throw it the shark.</p>
+  </div>
+
+  <div class="stage" id="stage"></div>
+
+  <div class="controls">
+    <input class="name" id="name" type="text" value="Mochi" maxlength="14" aria-label="Name on the box" autocomplete="off" spellcheck="false">
+    <div class="coats" role="group" aria-label="Coat colour"></div>
+    <button class="btn btn-secondary" type="button" id="toggle">Let it out</button>
+  </div>
+
+  <div class="get">
+    <button class="btn btn-primary btn-lg" type="button" data-download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
+      Download for Mac
+    </button>
+    <p class="small">Free · macOS 13 or later · Apple Silicon</p>
+  </div>
+</main>
+
+<footer class="foot">
+  <span>Vibe coded, so expect a little slop.</span>
+  <a href="about.html">What is this?</a>
+</footer>
+
+<dialog id="download" aria-labelledby="dl-title">
+  <form class="sheet" method="dialog">
+    <h2 id="dl-title" tabindex="-1" autofocus>Get DeskCat</h2>
+    <ol class="steps">
+      <li>Download <b>DeskCat.zip</b> and double-click it to unzip.</li>
+      <li>Drag <b>DeskCat</b> into your Applications folder.</li>
+      <li>Open it. The first time, your Mac will stop it (see below).</li>
+    </ol>
+    <div class="note">
+      <p><b>Why does my Mac complain?</b> DeskCat isn't signed by a paid Apple developer account, so macOS says it "can't verify" the app. It's safe to open; you only need to do this once:</p>
+      <ol class="steps" style="margin-top:8px">
+        <li>Try to open DeskCat, then click <b>Done</b> on the warning.</li>
+        <li>Open <b>System Settings → Privacy &amp; Security</b>.</li>
+        <li>Scroll down to "DeskCat was blocked…" and click <b>Open Anyway</b>.</li>
+      </ol>
+      <p style="margin-top:10px">Or, in Terminal:</p>
+      <pre><code>xattr -dr com.apple.quarantine /Applications/DeskCat.app</code></pre>
+    </div>
+    <p class="small" style="text-align:left">Once it's running, click the cat in your menu bar to rename it, pick a toy, or quit.</p>
+    <div class="row">
+      <button class="btn btn-secondary" value="close">Close</button>
+      <a class="btn btn-primary" href="https://github.com/roan-ux/DeskCat/releases/latest/download/DeskCat.zip">Download</a>
+    </div>
+  </form>
+</dialog>
+
+<script src="cat.js"></script>
+<script>
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  // The Mac app's coat colours (Look.swift).
+  const COATS = [["#1d1d1f", "Black"], ["#5c5e66", "Charcoal"], ["#e08a3d", "Ginger"], ["#f2e3c7", "Cream"], ["#f7f7f5", "White"]];
+  let coat = store.get("deskcat-coat");
+  if (!COATS.some(([c]) => c === coat)) coat = COATS[0][0];
+
+  const name = document.getElementById("name"), toggle = document.getElementById("toggle"), hint = document.getElementById("hint");
+  name.value = store.get("deskcat-name") ?? name.value;
+  const deskcat = DeskCat.mount(document.getElementById("stage"), {
+    name: name.value, coat,
+    onChange: (label, home) => { toggle.textContent = home ? "Let it out" : "Call it back"; },
+  });
+  toggle.addEventListener("click", () => (deskcat.isHome() ? deskcat.letOut() : deskcat.callHome()));
+  name.addEventListener("input", () => { deskcat.setName(name.value); store.set("deskcat-name", name.value); });
+
+  const coats = document.querySelector(".coats");
+  for (const [color, label] of COATS) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "coat"; b.title = label; b.setAttribute("aria-label", `${label} coat`);
+    b.style.setProperty("--c", color);
+    b.setAttribute("aria-pressed", String(color === coat));
+    b.addEventListener("click", () => {
+      coat = color; deskcat.setCoat(color); store.set("deskcat-coat", color);
+      for (const o of coats.children) o.setAttribute("aria-pressed", String(o === b));
+    });
+    coats.appendChild(b);
+  }
+
+  if (matchMedia("(hover: none)").matches) hint.textContent = "It lives in a box on your Mac. Tap it, drag it, or throw it the shark.";
+
+  const dialog = document.getElementById("download");
+  for (const b of document.querySelectorAll("[data-download]")) b.addEventListener("click", () => dialog.showModal());
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
+  const openFromHash = () => { if (location.hash === "#download" && !dialog.open) dialog.showModal(); };
+  openFromHash(); addEventListener("hashchange", openFromHash);
+  dialog.addEventListener("close", () => { if (location.hash) history.replaceState(null, "", location.pathname); });
+</script>
+</body>
+</html>
