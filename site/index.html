@@ -50,7 +50,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
       Download for Mac
     </button>
-    <p class="small">Free · macOS 13 or later · Apple Silicon</p>
+    <p class="small">Free · macOS 13 or later · Apple Silicon<span id="version"></span></p>
   </div>
 </main>
 
@@ -118,6 +118,17 @@
     coats.appendChild(b);
   }
 
+
+  // The newest release, straight from GitHub, so the version shown is always the one you'd download.
+  fetch("https://api.github.com/repos/roan-ux/DeskCat/releases/latest")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((rel) => {
+      if (!rel?.tag_name) return;
+      const date = new Date(rel.published_at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const link = Object.assign(document.createElement("a"), { href: rel.html_url, textContent: `${rel.tag_name} (${date})`, title: "What's new" });
+      document.getElementById("version").append(" · ", link);
+    })
+    .catch(() => {});
 
   const dialog = document.getElementById("download");
   for (const b of document.querySelectorAll("[data-download]")) b.addEventListener("click", () => dialog.showModal());

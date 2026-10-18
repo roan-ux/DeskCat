@@ -1,0 +1,49 @@
+# Builds DeskCat.app and publishes it as a new GitHub release whenever the app's code changes on
+# main. The website's Download button always points at the newest release, so it updates too.
+# Versions are VERSION + a running number (0.1.1, 0.1.2, ...); edit VERSION to start 0.2.x.
+name: App release
+on:
+  push:
+    branches: [main]
+    paths: [Sources/**, Sounds/**, Package.swift, scripts/make-app.sh, VERSION]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pick the version
+        run: |
+          echo "VERSION=$(cat VERSION).${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "BUILD=${{ github.run_number }}" >> "$GITHUB_ENV"
+      - name: Build DeskCat.app
+        run: ./scripts/make-app.sh
+      - name: Zip it
+        run: ditto -c -k --keepParent build/DeskCat.app DeskCat.zip
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          {
+            echo "## What's new"
+            if [ -n "$prev" ]; then git log --no-merges --format='- %s' "$prev"..HEAD -- Sources Sounds Package.swift scripts VERSION; else echo "- First release"; fi
+            echo
+            echo "## Install"
+            echo "Unzip, drag DeskCat into Applications, and open it. Needs macOS 13 or later on an Apple Silicon Mac."
+            echo
+            echo "DeskCat isn't signed by a paid Apple developer account, so macOS blocks it the first time. Try to open it, click **Done**, then go to **System Settings → Privacy & Security** and click **Open Anyway**. Or run:"
+            echo '```'
+            echo 'xattr -dr com.apple.quarantine /Applications/DeskCat.app'
+            echo '```'
+            echo
+            echo "Vibe coded, so expect a little slop."
+          } > notes.md
+          gh release create "v$VERSION" DeskCat.zip --title "DeskCat $VERSION" --notes-file notes.md --target "$GITHUB_SHA"

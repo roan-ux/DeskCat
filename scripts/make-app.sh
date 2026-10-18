@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Version shown in Finder's Get Info: VERSION (e.g. 0.1.4) and BUILD (a whole number) from the
+# release workflow, or the VERSION file plus "dev" for local builds.
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo 0.1)-dev}"
+BUILD="${BUILD:-1}"
+
 swift build -c release
 APP=build/DeskCat.app
 rm -rf "$APP"
@@ -20,8 +25,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>com.skailama.deskcat</string>
     <key>CFBundleExecutable</key><string>DeskCat</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+    <key>CFBundleVersion</key><string>${BUILD}</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
@@ -30,4 +35,4 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 codesign --force --sign - "$APP"
-echo "Built $APP ($(du -sh "$APP" | cut -f1))"
+echo "Built $APP $VERSION ($(du -sh "$APP" | cut -f1))"
