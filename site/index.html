@@ -33,11 +33,20 @@
 
 <main class="home">
   <div class="intro">
-    <h1>A little cat for your <mark>desk</mark>.</h1>
+    <h1>A little cat for your desk.</h1>
     <p>A lightweight cat companion that lives on your Mac.</p>
   </div>
 
-  <div class="stage" id="stage">
+  <div class="stage" id="stage"></div>
+
+  <div class="controls">
+    <div class="name">
+      <input id="name" type="text" value="Mochi" maxlength="14" aria-label="Name on the box" autocomplete="off" spellcheck="false">
+      <button type="button" id="shuffle" title="Random name" aria-label="Random name">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+      </button>
+    </div>
+    <div class="coats" role="group" aria-label="Coat colour"></div>
     <div class="sound">
     <button id="sound" type="button" aria-pressed="true" aria-label="Sound" title="Sound on">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -48,16 +57,6 @@
     </button>
     <input id="volume" type="range" min="0" max="100" step="1" value="40" aria-label="Volume">
     </div>
-  </div>
-
-  <div class="controls">
-    <div class="name">
-      <input id="name" type="text" value="Mochi" maxlength="14" aria-label="Name on the box" autocomplete="off" spellcheck="false">
-      <button type="button" id="shuffle" title="Random name" aria-label="Random name">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor" stroke="none"/></svg>
-      </button>
-    </div>
-    <div class="coats" role="group" aria-label="Coat colour"></div>
     <button class="btn btn-secondary" type="button" id="toggle">Let it out</button>
   </div>
 
