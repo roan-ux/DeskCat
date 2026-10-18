@@ -34,7 +34,7 @@
 <main class="home">
   <div class="intro">
     <h1>A little cat for your <mark>desk</mark>.</h1>
-    <p id="hint">It lives in a box on your Mac. Move your pointer near it, or throw it the shark.</p>
+    <p>A lightweight cat companion that lives on your Mac.</p>
   </div>
 
   <div class="stage" id="stage"></div>
@@ -96,7 +96,7 @@
   let coat = store.get("deskcat-coat");
   if (!COATS.some(([c]) => c === coat)) coat = COATS[0][0];
 
-  const name = document.getElementById("name"), toggle = document.getElementById("toggle"), hint = document.getElementById("hint");
+  const name = document.getElementById("name"), toggle = document.getElementById("toggle");
   name.value = store.get("deskcat-name") ?? name.value;
   const deskcat = DeskCat.mount(document.getElementById("stage"), {
     name: name.value, coat,
@@ -118,7 +118,6 @@
     coats.appendChild(b);
   }
 
-  if (matchMedia("(hover: none)").matches) hint.textContent = "It lives in a box on your Mac. Tap it, drag it, or throw it the shark.";
 
   const dialog = document.getElementById("download");
   for (const b of document.querySelectorAll("[data-download]")) b.addEventListener("click", () => dialog.showModal());
