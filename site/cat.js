@@ -3,8 +3,8 @@
    cat on the site behaves like the real one. World coordinates are CSS pixels with y up and the
    floor at 0. Everything stays inside the stage: the cat, the toy and the box.
 
-   DeskCat.mount(stage, { name, coat, toy, muted, sounds, onChange })
-     -> { setName, setCoat, setToy, setMuted, letOut, callHome, isHome, drawToyIcon } */
+   DeskCat.mount(stage, { name, coat, toy, muted, volume, sounds, onChange })
+     -> { setName, setCoat, setToy, setMuted, setVolume, letOut, callHome, isHome, drawToyIcon } */
 window.DeskCat = { mount(stage, opts = {}) {
   // =====================================================================
   //  Math
@@ -156,7 +156,8 @@ window.DeskCat = { mount(stage, opts = {}) {
   const TOY_SOUND = { mouse: "squeak", miniShark: "squeak", shark: "plush", plushCat: "plush", bird: "bell" };
   const soundBase = opts.sounds || "sounds/";
   const audio = { ctx: null, master: null, buffers: {}, purr: null, purrGain: null, purrMuffle: null, purrLevel: 0,
-                  lastTake: {}, duckUntil: 0, muted: !!opts.muted, loading: null };
+                  lastTake: {}, duckUntil: 0, muted: !!opts.muted, volume: opts.volume ?? 0.4, loading: null };
+  const applyVolume = () => { if (audio.master) audio.master.gain.value = audio.muted ? 0 : audio.volume; };
   let lastVocal = -10, lastSfx = {}, delayed = [];
   function audioStart() {
     if (audio.muted) return;
@@ -164,7 +165,7 @@ window.DeskCat = { mount(stage, opts = {}) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
       audio.ctx = new AC();
-      audio.master = audio.ctx.createGain(); audio.master.connect(audio.ctx.destination);
+      audio.master = audio.ctx.createGain(); audio.master.connect(audio.ctx.destination); applyVolume();
     }
     if (audio.ctx.state === "suspended") audio.ctx.resume();
     if (!audio.loading) {
@@ -197,7 +198,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     if (ev.muffled) db -= 4;
     const src = audio.ctx.createBufferSource();
     src.buffer = buf; src.playbackRate.value = 1 + rnd(-drift, drift);
-    src.connect(chain(ev.muffled, soundPan(), 0.8 * Math.pow(10, db / 20)));
+    src.connect(chain(ev.muffled, soundPan(), Math.pow(10, db / 20)));   // the volume is applied on the master gain
     src.start();
     if (vocal) audio.duckUntil = audio.ctx.currentTime + buf.duration;
   }
@@ -1685,7 +1686,8 @@ window.DeskCat = { mount(stage, opts = {}) {
   window.__deskcat = { get act() { return act; }, pos, toy, box, audio, get W() { return W; }, get H() { return H; } };
   return {
     isHome, letOut, callHome, setToy, setCoat, drawToyIcon,
-    setMuted(m) { audio.muted = m; if (audio.master) audio.master.gain.value = m ? 0 : 1; if (!m) audioStart(); },
+    setMuted(m) { audio.muted = m; applyVolume(); if (!m) audioStart(); },
+    setVolume(v) { audio.volume = clamp01(v); applyVolume(); },
     setName(n) { catName = String(n).trim().slice(0, 14); },
   };
 } };

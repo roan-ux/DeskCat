@@ -38,13 +38,16 @@
   </div>
 
   <div class="stage" id="stage">
-    <button class="sound" id="sound" type="button" aria-pressed="true" aria-label="Sound" title="Sound on">
+    <div class="sound">
+    <button id="sound" type="button" aria-pressed="true" aria-label="Sound" title="Sound on">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M11 5 6 9H3v6h3l5 4V5Z" fill="currentColor"/>
         <g class="on"><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></g>
         <g class="off"><path d="m16 9 6 6m0-6-6 6"/></g>
       </svg>
     </button>
+    <input id="volume" type="range" min="0" max="100" step="1" value="40" aria-label="Volume">
+    </div>
   </div>
 
   <div class="controls">
@@ -112,16 +115,34 @@
   const name = document.getElementById("name"), toggle = document.getElementById("toggle");
   name.value = store.get("deskcat-name") ?? name.value;
   let muted = store.get("deskcat-muted") === "1";
+  let volume = Number(store.get("deskcat-volume") ?? 40);
+  if (!(volume >= 0 && volume <= 100)) volume = 40;
   const deskcat = DeskCat.mount(document.getElementById("stage"), {
-    name: name.value, coat, muted,
+    name: name.value, coat, muted, volume: volume / 100,
     onChange: (label, home) => { toggle.textContent = home ? "Let it out" : "Call it back"; },
   });
   toggle.addEventListener("click", () => (deskcat.isHome() ? deskcat.letOut() : deskcat.callHome()));
   // Sound on or off (it starts on your first click or tap; browsers don't allow sound before that).
   const sound = document.getElementById("sound");
-  const showSound = () => { sound.setAttribute("aria-pressed", String(!muted)); sound.title = muted ? "Sound off" : "Sound on"; };
+  const slider = document.getElementById("volume");
+  const showSound = () => {
+    const off = muted || volume === 0;
+    sound.setAttribute("aria-pressed", String(!off)); sound.title = off ? "Sound off" : "Sound on";
+    slider.value = muted ? 0 : volume;
+    slider.style.setProperty("--fill", `${muted ? 0 : volume}%`);
+  };
+  const setMuted = (m) => { muted = m; deskcat.setMuted(m); store.set("deskcat-muted", m ? "1" : "0"); };
   showSound();
-  sound.addEventListener("click", () => { muted = !muted; deskcat.setMuted(muted); store.set("deskcat-muted", muted ? "1" : "0"); showSound(); });
+  sound.addEventListener("click", () => {
+    if (!muted && volume === 0) { volume = 40; deskcat.setVolume(0.4); store.set("deskcat-volume", 40); setMuted(false); }
+    else setMuted(!muted);
+    showSound();
+  });
+  slider.addEventListener("input", () => {
+    volume = Number(slider.value); deskcat.setVolume(volume / 100); store.set("deskcat-volume", volume);
+    if (muted && volume > 0) setMuted(false);
+    showSound();
+  });
 
   const setName = (v) => { deskcat.setName(v); store.set("deskcat-name", v); };
   name.addEventListener("input", () => setName(name.value));
