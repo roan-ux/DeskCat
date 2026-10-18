@@ -13,8 +13,8 @@
 enum CatSound: CaseIterable {
     // the cat's voice
     case meow, chirp, wake
-    // the box and the floor
-    case boxIn, boxOut, land
+    // the box, the floor, the screen it climbs
+    case boxIn, boxOut, land, claw
     // toys
     case squeak, plush, bell, toyLand
 
@@ -27,6 +27,7 @@ enum CatSound: CaseIterable {
         case .boxIn: return "box-in"
         case .boxOut: return "box-out"
         case .land, .toyLand: return "land"
+        case .claw: return "claw"
         case .squeak: return "squeak"
         case .plush: return "plush"
         case .bell: return "bell"
@@ -39,6 +40,7 @@ enum CatSound: CaseIterable {
         case .meow, .chirp: return 0
         case .wake: return -1
         case .boxIn, .boxOut, .land: return -3
+        case .claw: return -5                         // a light scrabble under everything else
         case .squeak, .plush: return -2
         case .bell: return -3
         case .toyLand: return -6

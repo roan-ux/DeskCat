@@ -53,7 +53,6 @@ final class CatController: NSObject {
         toyWindow = PetWindow.make(size: ToyView.size(scale: scale))
         super.init()
         toyWindow.contentView = toyView
-        toyWindow.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 2)   // above the cat: it carries it
         toyView.sim = sim
         toyView.onPress = { [weak self] in self?.toyPressed() }
         toyView.onRelease = { [weak self] in self?.toyReleased() }
@@ -226,6 +225,10 @@ final class CatController: NSObject {
         let size = ToyView.size(scale: sim.scale), t = sim.toy
         let origin = CGPoint(x: (t.pos.x - size.width / 2).rounded(), y: (t.pos.y - size.height / 2).rounded())
         if toyWindow.frame.origin != origin { toyWindow.setFrameOrigin(origin) }
+        // In the box, the toy sits behind the cat (same layer as the box); once it's out, in your
+        // hand, flying or in the cat's mouth, it comes in front of the cat.
+        let level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + (t.place == .box ? 0 : 2))
+        if toyWindow.level != level { toyWindow.level = level; toyWindow.orderFrontRegardless() }
         if !toyWindow.isVisible { toyWindow.orderFrontRegardless() }
         let place: CGFloat = t.place == .box ? 0 : t.place == .held ? 1 : t.place == .free ? 2 : 3
         let state = [t.pos.x, t.pos.y, t.angle, t.facing, place, (sim.boxShow.x * 100).rounded(), CGFloat(sim.toyKind?.radius ?? 0)]

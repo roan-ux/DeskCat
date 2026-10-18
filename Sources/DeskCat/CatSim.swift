@@ -755,7 +755,7 @@ final class CatSim {
             n.dur = rnd(4, 8); n.tiltSign = chance(0.5) ? 1 : -1
             visitPending = false; visitAt = time + rnd(300, 600)
         case .chase: n.dur = rnd(20, 35)
-        case .climb: n.dur = rnd(10, 14); n.x = 0; n.landY = 0; climbPhase = 0
+        case .climb: n.dur = rnd(10, 14); n.x = 0; n.landY = 0; climbPhase = 0; sfx(.claw)   // grabs on
         case .trophy:
             let side: CGFloat = chance(0.5) ? 1 : -1
             n.x = clamp(pos.x + side * rnd(150, 350) * scale, minX, maxX); n.dur = rnd(1.2, 2.2)
@@ -1410,7 +1410,9 @@ final class CatSim {
         let stroke = Self.climbStroke * scale
         let moreToGo = toy.place == .held && t < d.dur && want > d.landY + 4 * scale
         if moreToGo || climbPhase > 0 {
+            let was = climbPhase
             climbPhase += dt / 0.5
+            if was < 0.35 && climbPhase >= 0.35 { sfx(.claw, level: rnd(0.7, 1)) }   // claws dig in as it pushes
             if climbPhase >= 1 { climbPhase = 0; d.landY += stroke; climbLead = -climbLead }
         }
         if !moreToGo && climbPhase == 0 && want < d.landY - stroke * 1.5 {

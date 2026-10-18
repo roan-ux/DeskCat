@@ -14,6 +14,8 @@ takes are also low-passed so they sound soft and inside the box.
 | `box-in-3` | [foley_Cardboard Box Drop](https://freesound.org/people/ittou/sounds/465451/) (Freesound) | ittou | CC0 |
 | `box-in-4` | [Cardboard_Small Impact_06](https://freesound.org/people/BenDrain/sounds/487999/) (Freesound) | BenDrain | CC0 |
 | `box-out-1`…`3` | [hit-tap-strike-cardboard-box-13-times](https://freesound.org/people/newagesoup/sounds/364932/) (Freesound) | newagesoup | CC0 |
+| `claw-1`…`3` | [Cat Scratching A Post](https://freesound.org/people/Samantha_Dolman/sounds/490730/) (Freesound) | Samantha_Dolman | CC0 |
+| `claw-4`, `claw-5` | [Cats scratching door](https://freesound.org/people/VoxHumanaMusiCurators/sounds/473923/) (Freesound) | VoxHumanaMusiCurators | CC0 |
 | `land-1` | [Light Body thud (on clothing)](https://freesound.org/people/JonasTisell/sounds/496187/) (Freesound) | JonasTisell | CC0 |
 | `squeak-1` | [Squeaky Toy #4](https://freesound.org/people/Breviceps/sounds/483922/) (Freesound) | Breviceps | CC0 |
 | `plush-1`…`4` | [Coin-Coin (Toy) #0364](https://bigsoundbank.com/coin-coin-toy-s0364.html) (BigSoundBank) | Joseph Sardin | CC0 |
