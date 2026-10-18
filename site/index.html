@@ -66,7 +66,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
       Download for Mac
     </button>
-    <p class="small">Free · macOS 13 or later · Apple Silicon<span id="version"></span></p>
+    <p class="small"><span id="version"></span>macOS 13 or later</p>
   </div>
 </main>
 
@@ -178,7 +178,7 @@
     .then((rel) => {
       if (!rel?.tag_name) return;
       const link = Object.assign(document.createElement("a"), { href: rel.html_url, textContent: rel.tag_name, title: "What's new" });
-      document.getElementById("version").append(" · ", link);
+      document.getElementById("version").append(link, " · ");
     })
     .catch(() => {});
 
