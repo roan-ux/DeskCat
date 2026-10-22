@@ -181,15 +181,53 @@ final class CatController: NSObject {
                      muffled: sim.isHome && sim.boxClip != nil, pan: pan, volume: volume)
     }
 
-    /// The cat lives on the screen its box is on; the floor is just above the Dock.
+    /// Where the cat can go. Screens that sit side by side (touching edges) make one strip it can
+    /// walk along; each has its own floor (just above its Dock or bottom edge) and top, which can
+    /// be at different heights. The floor and top it uses are the ones of the screen it's on.
     private func updateWorld() {
-        let center = CGPoint(x: sim.box.x + sim.boxW / 2, y: sim.box.y + 40)
-        let screen = NSScreen.screens.first { $0.frame.contains(center) } ?? NSScreen.main
-        guard let vf = screen?.visibleFrame else { return }
-        sim.floorY = vf.minY
-        sim.minX = vf.minX + 50
-        sim.maxX = vf.maxX - 50
-        sim.maxY = vf.maxY
+        let screens = NSScreen.screens.map { (frame: $0.frame, visible: $0.visibleFrame) }
+        guard !screens.isEmpty else { return }
+        // where the cat is: in the box, that's the box; otherwise the cat itself
+        let ref = sim.isHome ? CGPoint(x: sim.box.x + sim.boxW / 2, y: sim.box.y + 40)
+                             : CGPoint(x: sim.pos.x, y: sim.pos.y + 20 * sim.scale)
+        func distance(_ r: CGRect, _ p: CGPoint) -> CGFloat {
+            hypot(max(r.minX - p.x, 0, p.x - r.maxX), max(r.minY - p.y, 0, p.y - r.maxY))
+        }
+        let current = screens.indices.min { distance(screens[$0].frame, ref) < distance(screens[$1].frame, ref) }!
+        // grow the strip left and right through screens whose edges touch (and overlap vertically)
+        var strip = [current]
+        var grew = true
+        while grew {
+            grew = false
+            for j in screens.indices where !strip.contains(j) {
+                let b = screens[j].frame
+                let touches = strip.contains { i in
+                    let a = screens[i].frame
+                    let side = abs(a.maxX - b.minX) < 2 || abs(b.maxX - a.minX) < 2
+                    return side && min(a.maxY, b.maxY) - max(a.minY, b.minY) > 0
+                }
+                if touches { strip.append(j); grew = true }
+            }
+        }
+        let parts = strip.map { screens[$0].visible }
+        func part(at x: CGFloat) -> CGRect {
+            parts.first { x >= $0.minX && x < $0.maxX } ?? parts.min { abs($0.midX - x) < abs($1.midX - x) }!
+        }
+        let here = sim.isHome ? screens[current].visible : part(at: sim.pos.x)
+        sim.floorY = here.minY
+        sim.maxY = here.maxY
+        sim.minX = parts.map(\.minX).min()! + 50
+        sim.maxX = parts.map(\.maxX).max()! - 50
+        sim.floorAt = { x in part(at: x).minY }
+        sim.topAt = { x in part(at: x).maxY }
+    }
+
+    /// The floor of whichever screen a point is over (for putting the box down anywhere).
+    private func floorUnder(_ p: CGPoint) -> CGFloat {
+        let s = NSScreen.screens.first { $0.frame.contains(p) } ?? NSScreen.screens.min {
+            hypot($0.frame.midX - p.x, $0.frame.midY - p.y) < hypot($1.frame.midX - p.x, $1.frame.midY - p.y)
+        }
+        return s?.visibleFrame.minY ?? sim.floorY
     }
 
     private func syncWindows() {
@@ -248,15 +286,21 @@ final class CatController: NSObject {
 
     // MARK: Box dragging (only while the cat is home and the box is showing)
 
-    private func boxDragStart() { dragOrigin = sim.box }
+    // Works whether the cat is in it (it comes along) or out (bring the box to the cat).
+    private func boxDragStart() { dragOrigin = sim.box; sim.boxDragging = true }
 
     private func boxDragged(by delta: CGVector) {
-        guard sim.isHome else { return }
-        sim.box = CGPoint(x: dragOrigin.x + delta.dx, y: max(sim.floorY, dragOrigin.y + delta.dy))
+        let x = dragOrigin.x + delta.dx
+        let floor = floorUnder(CGPoint(x: x + sim.boxW / 2, y: dragOrigin.y + delta.dy + 40))
+        sim.box = CGPoint(x: x, y: max(floor, dragOrigin.y + delta.dy))
         updateWorld()
     }
 
-    private func boxDragEnded() { Settings.boxOrigin = sim.box }
+    private func boxDragEnded() {
+        sim.boxDragging = false
+        Settings.boxOrigin = sim.box
+        sim.boxMoved()      // dropped next to the cat: it hops in
+    }
 
     private func placeBox() {
         if let saved = Settings.boxOrigin,

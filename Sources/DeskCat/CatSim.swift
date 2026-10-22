@@ -166,6 +166,14 @@ final class CatSim {
     var minX: CGFloat = 0
     var maxX: CGFloat = 1000
     var maxY: CGFloat = 1000
+    /// Floor and ceiling at any x across the screens the cat can walk between (set by the app;
+    /// screens side by side can sit at different heights). `floorY`/`maxY` are the ones under the cat.
+    var floorAt: ((CGFloat) -> CGFloat)?
+    var topAt: ((CGFloat) -> CGFloat)?
+    func floor(at x: CGFloat) -> CGFloat { floorAt?(x) ?? floorY }
+    func top(at x: CGFloat) -> CGFloat { topAt?(x) ?? maxY }
+    /// You're dragging the box: keep it out.
+    var boxDragging = false
     var box = CGPoint.zero                       // bottom-left of the box body
     var boxShow = Spring(1, f: 4.2, z: 0.42)
     var roams = true
@@ -258,9 +266,9 @@ final class CatSim {
     var toyInBox: Bool { toyKind != nil && toy.place == .box }
     /// Keep the box out while the cat's away: the toy's in it, you're holding the toy (and might
     /// put it back), or you only just took it out.
-    private var boxNeeded: Bool { toyInBox || (toyKind != nil && toy.place == .held) || time < boxLingerUntil }
+    private var boxNeeded: Bool { boxDragging || toyInBox || (toyKind != nil && toy.place == .held) || time < boxLingerUntil }
     var toySpeed: CGFloat { hypot(toy.vx, toy.vy) }
-    var toyResting: Bool { toy.place == .free && toySpeed < 15 && toy.pos.y - toyRadius - floorY < 2 }
+    var toyResting: Bool { toy.place == .free && toySpeed < 15 && toy.pos.y - toyRadius - floor(at: toy.pos.x) < 2 }
     /// Being waved about or flying: impossible to ignore.
     var toyExciting: Bool {
         toyKind != nil && ((toy.place == .held && ptrSpeed > 40) || (toy.place == .free && toySpeed > 60))
@@ -479,6 +487,7 @@ final class CatSim {
         time += dt
         trackPointer(raw, dt)
         think(dt)
+        followFloor()
         speed = air ? 0 : abs(velX)
         gait += speed * dt * 0.6 / (14 + 10 * clamp01(speed / 260))
         breath += dt * (sleeping ? 1.6 : 2.6)
@@ -1070,6 +1079,20 @@ final class CatSim {
         if d.dur > 0 && t > d.dur { sleeping = false; open.target = 1; lastVocal = -10; say(.wake, 0.55); enter(chance(0.6) ? .stretch : .yawn) }
     }
 
+    /// Screens side by side can have their floors at different heights: walking off a higher
+    /// one, it drops down; walking into a higher one, it hops up.
+    private func followFloor() {
+        guard !air, !held, !isHome, boxClip == nil, act != .climb else { return }
+        if abs(pos.y - floorY) > 2 && act == .goHome { homePending = true }   // carry on home after the hop
+        if pos.y > floorY + 2 {
+            velY = 0; air = true
+            go(.air, ActData(bored: d.bored, then: .land))
+        } else if pos.y < floorY - 2 {
+            let fs: CGFloat = facing.target >= 0 ? 1 : -1
+            launch(pos.x + fs * 24 * scale, floorY, 30 * scale, .land)
+        }
+    }
+
     private func goHome(_ dt: CGFloat) {
         boxShow.target = 1
         // Tidies up: fetches its toy and carries it home in its mouth.
@@ -1081,11 +1104,19 @@ final class CatSim {
             }
             return
         }
-        let cx = box.x + boxW / 2, onFloor = box.y - floorY < 10
+        let cx = box.x + boxW / 2, onFloor = box.y - floor(at: cx) < 10
         let side: CGFloat = sgn(pos.x - cx) == 0 ? 1 : sgn(pos.x - cx)
         let spot = onFloor ? cx + side * (boxW / 2 + 34 * scale) : cx + side * 30 * scale
         pose(.stand); mood(.walk); lookForward()
         if t < 0.5 { brake(dt); lookAt(cx, box.y + boxRim); return }
+        // The box is somewhere it can't walk to (a screen above, or across a gap), or it's been
+        // trying for a while: one big leap straight into it.
+        let reachable = spot > minX - 4 && spot < maxX + 4
+        if !reachable || t > 15 {
+            faceTo(cx, 1)
+            launch(cx, box.y + boxRim - 30 * scale, 60 * scale, .box)
+            return
+        }
         if moveToward(spot, 120, dt, 5) {
             faceTo(cx, 1)
             d.prep += dt; squash.target = 0.8; pose(.crouch); crouch.target = 0.5
@@ -1243,8 +1274,9 @@ final class CatSim {
                 && toy.pos.y < rimY + r && toy.pos.y > rimY - 25 * scale {
                 toyBackInBox(); return
             }
-            if toy.pos.y - r <= floorY {
-                toy.pos.y = floorY + r
+            let toyFloor = floor(at: toy.pos.x)
+            if toy.pos.y - r <= toyFloor {
+                toy.pos.y = toyFloor + r
                 if toy.vy < -350 { sfx(kind == .bird ? .bell : .toyLand, level: (-toy.vy - 250) / 1200) }    // hits the floor
                 if toy.vy < -120 { toy.vy = -toy.vy * 0.42; toy.spin *= 0.7 } else { toy.vy = 0 }
                 toy.vx *= exp(-dt * (kind.rolls ? 1.6 : 4.5))
@@ -1260,7 +1292,7 @@ final class CatSim {
             let lo = minX - 40 * scale, hi = maxX + 40 * scale
             if toy.pos.x < lo { toy.pos.x = lo; toy.vx = abs(toy.vx) * 0.5 }
             if toy.pos.x > hi { toy.pos.x = hi; toy.vx = -abs(toy.vx) * 0.5 }
-            if toy.pos.y + r > maxY { toy.pos.y = maxY - r; toy.vy = -abs(toy.vy) * 0.4 }
+            if toy.pos.y + r > top(at: toy.pos.x) { toy.pos.y = top(at: toy.pos.x) - r; toy.vy = -abs(toy.vy) * 0.4 }
             if abs(toy.vx) > 30 { toy.facing = sgn(toy.vx) }
         }
     }
@@ -1270,6 +1302,15 @@ final class CatSim {
         placeToyInBox()
         guard !isHome && act != .goHome && !held else { return }
         if committed { homePending = true } else { sleeping = false; go(.goHome) }
+    }
+
+    /// You put the box down. If it's right by the cat, it hops in; either way the box stays out a
+    /// little while so it can.
+    func boxMoved() {
+        boxLingerUntil = max(boxLingerUntil, time + 5)
+        guard !isHome, !held, !air, act != .goHome, act != .climb else { return }
+        let gap = max(0, abs(box.x + boxW / 2 - pos.x) - boxW / 2)      // from the cat to the box's near side
+        if gap < 200 * scale && abs(box.y - floorY) < 60 * scale { sleeping = false; go(.goHome) }
     }
 
     /// Pointer pressed on the toy. Returns false if there's nothing to pick up.
@@ -1403,6 +1444,7 @@ final class CatSim {
         earL.target = 0.1; earR.target = 0.1; dil.target = 1
         gx.target = clamp((toy.pos.x - pos.x) / (160 * scale), -0.6, 0.6); gy.target = 0.8   // looking up at it
         lastToyPlay = time
+        if chance(dt / 4) { say(.meow) }        // a meow now and then on the way up (rationed like any meow)
         // Climbs until its paws are at the toy (they reach ~30 above the head), up to 60% of the screen.
         let maxH = max(0, (maxY - floorY) * 0.6)
         let want = clamp(toy.pos.y - floorY - 74 * scale - 25 * scale, 0, maxH)
@@ -1413,7 +1455,8 @@ final class CatSim {
         if moreToGo || climbPhase > 0 {
             let was = climbPhase
             climbPhase += dt / 0.5
-            if was < 0.35 && climbPhase >= 0.35 { sfx(.claw, level: rnd(0.7, 1)) }   // claws dig in as it pushes
+            if was < 0.35 && climbPhase >= 0.35 { sfx(.claw, level: rnd(0.7, 1)) }    // back claws dig in as it pushes
+            if was < 0.62 && climbPhase >= 0.62 { sfx(.claw, level: rnd(0.45, 0.7)) } // front claws catch, higher up
             if climbPhase >= 1 { climbPhase = 0; d.landY += stroke; climbLead = -climbLead }
         }
         if !moreToGo && climbPhase == 0 && want < d.landY - stroke * 1.5 {

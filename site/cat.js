@@ -137,7 +137,8 @@ window.DeskCat = { mount(stage, opts = {}) {
   let visitAt = 0, visitPending = false;
   const toyRadius = () => (toyKind ? TOYS[toyKind].radius : 12) * scale;
   const toyInBox = () => toyKind != null && toy.place === "box";
-  const boxNeeded = () => toyInBox() || (toyKind != null && toy.place === "held") || time < boxLingerUntil;
+  let boxDragging = false;   // you're dragging the box: keep it out
+  const boxNeeded = () => boxDragging || toyInBox() || (toyKind != null && toy.place === "held") || time < boxLingerUntil;
   const toySpeed = () => hypot(toy.vx, toy.vy);
   const toyResting = () => toy.place === "free" && toySpeed() < 15 && toy.pos.y - toyRadius() - floorY < 2;
   const toyExciting = () => toyKind != null && ((toy.place === "held" && ptrSpeed > 40) || (toy.place === "free" && toySpeed() > 60));
@@ -151,7 +152,7 @@ window.DeskCat = { mount(stage, opts = {}) {
   const SOUNDS = {   // file prefix, number of takes, mix offset (dB), pitch drift, vocal
     meow: ["meow", 3, 0, 0.035, true], chirp: ["chirp", 1, 0, 0.035, true], wake: ["wake", 1, -1, 0.035, true],
     dizzy: ["dizzy", 1, -4, 0.04],
-    boxIn: ["box-in", 4, -3, 0.07], boxOut: ["box-out", 3, -3, 0.07], land: ["land", 1, -3, 0.07], claw: ["claw", 5, -5, 0.07],
+    boxIn: ["box-in", 4, -3, 0.07], boxOut: ["box-out", 3, -3, 0.07], land: ["land", 1, -3, 0.07], claw: ["claw", 6, -2, 0.07],
     squeak: ["squeak", 1, -2, 0.07], plush: ["plush", 4, -2, 0.07], bell: ["bell", 1, -3, 0.02], toyLand: ["land", 1, -6, 0.07],
   };
   const TOY_SOUND = { mouse: "squeak", miniShark: "squeak", shark: "plush", plushCat: "plush", bird: "bell" };
@@ -1028,6 +1029,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     earL.target = earR.target = 0.1; dil.target = 1;
     gx.target = clamp((toy.pos.x - pos.x) / (160 * scale), -0.6, 0.6); gy.target = 0.8;   // looking up at it
     lastToyPlay = time;
+    if (chance(dt / 4)) say("meow");   // a meow now and then on the way up (rationed like any meow)
     // climbs until its paws are at the toy, up to 60% of the stage, and never past the top
     const maxH = Math.max(0, Math.min((maxY - floorY) * 0.6, maxY - floorY - 140 * scale));
     const want = clamp(toy.pos.y - floorY - 74 * scale - 25 * scale, 0, maxH);
@@ -1036,7 +1038,8 @@ window.DeskCat = { mount(stage, opts = {}) {
     if (moreToGo || climbPhase > 0) {
       const was = climbPhase;
       climbPhase += dt / 0.5;
-      if (was < 0.35 && climbPhase >= 0.35) sfx("claw", rnd(0.7, 1));   // claws dig in as it pushes
+      if (was < 0.35 && climbPhase >= 0.35) sfx("claw", rnd(0.7, 1));     // back claws dig in as it pushes
+      if (was < 0.62 && climbPhase >= 0.62) sfx("claw", rnd(0.45, 0.7));  // front claws catch, higher up
       if (climbPhase >= 1) { climbPhase = 0; d.landY += stroke; climbLead = -climbLead; }
     }
     if (!moreToGo && climbPhase === 0 && want < d.landY - stroke * 1.5) d.landY = Math.max(0, d.landY - 60 * scale * dt);   // toy lowered: slides down a bit
@@ -1111,6 +1114,13 @@ window.DeskCat = { mount(stage, opts = {}) {
     go("leaving", newD({ peekValue: d.peek.x }));
   }
   function callHome() { if (isHome() || act === "goHome" || act === "air" || act === "held") return; sleeping = false; go("goHome"); }
+  /** You put the box down: if it's right by the cat, it hops in; either way it stays out a little while. */
+  function boxPutDown() {
+    boxLingerUntil = Math.max(boxLingerUntil, time + 5);
+    if (isHome() || held || air || act === "goHome" || act === "climb") return;
+    const gap = Math.max(0, Math.abs(box.x + boxW() / 2 - pos.x) - boxW() / 2);   // from the cat to the box's near side
+    if (gap < 200 * scale) { sleeping = false; go("goHome"); }
+  }
   function clickCat() {
     if (act === "inBox") { letOut(); return; }
     if (committed()) return;
@@ -1626,7 +1636,7 @@ window.DeskCat = { mount(stage, opts = {}) {
     raw = p; ptrX = p.x; ptrY = p.y;   // a tap jumps the "pointer" here: don't read it as a fast swipe
     if (hitToy(p) && grabToy()) drag = { what: "toy" };
     else if (hitCat(p)) drag = { what: "cat", start: { ...p }, moved: false };
-    else if (isHome() && hitBox(p)) drag = { what: "box", start: { ...p }, origin: { ...box } };
+    else if (hitBox(p)) { drag = { what: "box", start: { ...p }, origin: { ...box } }; boxDragging = true; }   // in or out, bring the box to the cat
     if (drag) { try { canvas.setPointerCapture(e.pointerId); } catch {} canvas.style.cursor = "grabbing"; e.preventDefault(); }
   });
   canvas.addEventListener("pointermove", (e) => {
@@ -1635,12 +1645,13 @@ window.DeskCat = { mount(stage, opts = {}) {
       drag.moved = true; pickUp(); raw = clampDrag(raw);
     }
     if (drag?.what === "box") { boxMoved = true; box.x = clamp(drag.origin.x + raw.x - drag.start.x, 8, W - boxW() - 8); }
-    if (!drag) canvas.style.cursor = hitToy(raw) || hitCat(raw) || (isHome() && hitBox(raw)) ? "grab" : "default";
+    if (!drag) canvas.style.cursor = hitToy(raw) || hitCat(raw) || hitBox(raw) ? "grab" : "default";
   });
   const endDrag = () => {
     if (!drag) return;
     if (drag.what === "toy") throwToy();
     else if (drag.what === "cat") { if (drag.moved) release(); else clickCat(); }
+    else if (drag.what === "box") { boxDragging = false; boxPutDown(); }
     drag = null; canvas.style.cursor = "default";
   };
   canvas.addEventListener("pointerup", endDrag);

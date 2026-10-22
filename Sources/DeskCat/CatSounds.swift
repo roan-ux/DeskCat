@@ -44,7 +44,7 @@ enum CatSound: CaseIterable {
         case .wake: return -1
         case .dizzy: return -4                        // bright tweets, so they sit back a little
         case .boxIn, .boxOut, .land: return -3
-        case .claw: return -5                         // a light scrabble under everything else
+        case .claw: return -2                         // short claw ticks: they measure quiet, so less of a cut
         case .squeak, .plush: return -2
         case .bell: return -3
         case .toyLand: return -6
