@@ -3,8 +3,8 @@ import AVFoundation
 /// Plays the cat's recorded sounds: one-shots (meows, box, toy) round-robin on a few mono
 /// voices so they can overlap, panned to where the cat is on screen, and a looping purr whose
 /// level follows how hard the cat is purring. Each voice is player → varispeed (pitch drift)
-/// → low-pass (muffling inside the box) → mixer. The engine is paused whenever everything is
-/// quiet, so it costs nothing while idle.
+/// → low-pass (muffling inside the box) → mixer. The engine is stopped whenever everything is
+/// quiet, so it holds no audio output while idle.
 @MainActor
 final class CatAudio {
     private let engine = AVAudioEngine()
@@ -138,8 +138,11 @@ final class CatAudio {
             purrPlayer.stop()
             purrRunning = false
         }
+        // Stop (not just pause) once everything is quiet: a paused engine keeps the speakers open,
+        // which can hiss on some outputs and keeps the Mac from idle-sleeping. It restarts in a
+        // few milliseconds when the next sound plays.
         if engine.isRunning && !purrRunning && CACurrentMediaTime() > busyUntil {
-            engine.pause()
+            engine.stop()
         }
     }
 
