@@ -1,23 +1,38 @@
+import AppKit
 import AVFoundation
+import CoreAudio
 
 /// Plays the cat's recorded sounds: one-shots (meows, box, toy) round-robin on a few mono
 /// voices so they can overlap, panned to where the cat is on screen, and a looping purr whose
 /// level follows how hard the cat is purring. Each voice is player → varispeed (pitch drift)
 /// → low-pass (muffling inside the box) → mixer. The engine is stopped whenever everything is
 /// quiet, so it holds no audio output while idle.
+///
+/// A stopped engine can't simply be started again: its varispeed units come back silent, and
+/// the output may have changed under it (sleep and wake, a different output device) without it
+/// hearing about it. So whenever it's needed again after a stop, or after a wake, an output-device
+/// change, a configuration change or a failed start, the whole engine is rebuilt (the loaded
+/// sounds are kept; it takes a few milliseconds).
 @MainActor
 final class CatAudio {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let format: AVAudioFormat
     private struct Voice {
         let player = AVAudioPlayerNode()
         let pitch = AVAudioUnitVarispeed()
         let muffle = AVAudioUnitEQ(numberOfBands: 1)
     }
-    private let voices = (0..<4).map { _ in Voice() }
+    private var voices: [Voice] = []
     private var nextVoice = 0
-    private let purrPlayer = AVAudioPlayerNode()
-    private let purrMuffle = AVAudioUnitEQ(numberOfBands: 1)
+    private var purrPlayer = AVAudioPlayerNode()
+    private var purrMuffle = AVAudioUnitEQ(numberOfBands: 1)
+    /// Set when the output may have changed; the next sound rebuilds the engine first.
+    private var needsRebuild = false
+    /// Set when the engine was stopped for being quiet. It's then rebuilt before it plays again:
+    /// the varispeed (pitch) units stay silent after an engine stop/start, which used to leave
+    /// every sound but the purr mute for good.
+    private var stoppedAt: CFTimeInterval = 0
+    private var configObserver: NSObjectProtocol?
     /// The purr dips under the cat's voice until then.
     private var duckUntil: CFTimeInterval = 0
     private var takes: [CatSound: [AVAudioPCMBuffer]] = [:]
@@ -30,6 +45,24 @@ final class CatAudio {
     init() {
         let hw = engine.outputNode.outputFormat(forBus: 0).sampleRate
         format = AVAudioFormat(standardFormatWithSampleRate: hw > 0 ? hw : 48000, channels: 1)!
+        let dir = Self.soundsDirectory
+        for sound in CatSound.allCases {
+            takes[sound] = (1...9).compactMap { load(dir?.appendingPathComponent("\(sound.prefix)-\($0).wav")) }
+        }
+        purrLoop = load(dir?.appendingPathComponent("purr-1.wav"))
+        buildGraph()
+        watchForOutputChanges()
+    }
+
+    /// A fresh engine with its voices and purr wired up. The player→mixer connections use our own
+    /// mono format; the mixer converts to whatever the output device wants at the time.
+    private func buildGraph() {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+        engine.stop()
+        engine = AVAudioEngine()
+        voices = (0..<4).map { _ in Voice() }
+        purrPlayer = AVAudioPlayerNode()
+        purrMuffle = AVAudioUnitEQ(numberOfBands: 1)
         for v in voices {
             for node in [v.player, v.pitch, v.muffle] as [AVAudioNode] { engine.attach(node) }
             Self.setUpMuffle(v.muffle)
@@ -41,12 +74,30 @@ final class CatAudio {
         Self.setUpMuffle(purrMuffle)
         engine.connect(purrPlayer, to: purrMuffle, format: format)
         engine.connect(purrMuffle, to: engine.mainMixerNode, format: format)
-        let dir = Self.soundsDirectory
-        for sound in CatSound.allCases {
-            takes[sound] = (1...9).compactMap { load(dir?.appendingPathComponent("\(sound.prefix)-\($0).wav")) }
-        }
-        purrLoop = load(dir?.appendingPathComponent("purr-1.wav"))
         engine.prepare()
+        purrRunning = false
+        needsRebuild = false
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsRebuild = true }
+        }
+    }
+
+    /// Wakes and output-device switches can leave a stopped engine pointing at an output that's
+    /// gone, without telling it. Flag a rebuild for the next sound.
+    private func watchForOutputChanges() {
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.needsRebuild = true }
+            }
+        }
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.needsRebuild = true }
+        }
     }
 
     /// A low-pass that's bypassed unless the sound comes from inside the box.
@@ -143,13 +194,19 @@ final class CatAudio {
         // few milliseconds when the next sound plays.
         if engine.isRunning && !purrRunning && CACurrentMediaTime() > busyUntil {
             engine.stop()
+            stoppedAt = CACurrentMediaTime()
         }
     }
 
-    /// Restarts the engine if it was paused, or stopped by an output change (e.g. headphones).
+    /// Starts the engine for a sound, rebuilding it first if the output may have changed, and
+    /// once more if starting fails, so a dead engine can't keep the cat silent.
     @discardableResult
     private func ensureRunning() -> Bool {
+        if !engine.isRunning && stoppedAt > 0 { needsRebuild = true }
+        if needsRebuild { buildGraph(); stoppedAt = 0 }
         if engine.isRunning { return true }
-        do { try engine.start(); return true } catch { return false }
+        if (try? engine.start()) != nil { return true }
+        buildGraph()
+        return (try? engine.start()) != nil
     }
 }
