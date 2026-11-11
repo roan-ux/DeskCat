@@ -3,8 +3,8 @@
    cat on the site behaves like the real one. World coordinates are CSS pixels with y up and the
    floor at 0. Everything stays inside the stage: the cat, the toy and the box.
 
-   DeskCat.mount(stage, { name, coat, toy, muted, volume, sounds, onChange })
-     -> { setName, setCoat, setToy, setMuted, setVolume, letOut, callHome, isHome, drawToyIcon } */
+   DeskCat.mount(stage, { name, coat, pattern, toy, muted, volume, sounds, onChange })
+     -> { setName, setCoat, setPattern, setToy, setMuted, setVolume, letOut, callHome, isHome, drawToyIcon } */
 window.DeskCat = { mount(stage, opts = {}) {
   // =====================================================================
   //  Math
@@ -1168,18 +1168,49 @@ window.DeskCat = { mount(stage, opts = {}) {
 
   // Black coat and white eyes, the Mac app's defaults (Look.swift → Palette).
   const PAL = { sclera: "#ffffff", pupil: "#121214", mouth: "#ff8fa3", heart: "#ff6b8b", star: "#ffd140", ink: "#1d1d1f" };
-  /** Coat colour → the cat's drawing colours, the way Palette in Look.swift derives them (eyes stay white). */
-  function setCoat(hex) {
-    const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
-    const lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], light = lum > 0.55;
-    const mix = (o, k) => `rgb(${c.map((v, i) => Math.round(lerp(v, o, k) * 255)).join(",")})`;
-    PAL.coat = hex;
-    PAL.coatFar = light ? mix(0, 0.1) : mix(1, 0.07);    // far-side legs, a touch off the coat for depth
-    PAL.pawRim = light ? mix(0, 0.3) : mix(1, 0.22);     // rim around a paw held in front of the face
-    PAL.detail = light ? "rgba(29,29,31,0.85)" : "#ffffff";   // toe lines, closed and happy eyes
-    PAL.eyeRing = Math.abs(1 - lum) < 0.35 ? "rgba(29,29,31,0.8)" : null;   // so white eyes still read on a pale coat
+  // Coat patterns (CoatPattern in Look.swift). The coat colour stays the main colour; each pattern adds to it.
+  const PATTERNS = ["solid", "tabby", "tuxedo", "calico", "colorpoint"];
+  let coatHex = opts.coat || "#1d1d1f", pattern = PATTERNS.includes(opts.pattern) ? opts.pattern : "solid";
+  /** Coat colour and pattern → the cat's drawing colours, the way Palette in Look.swift derives them (eyes stay white). */
+  function buildPalette() {
+    const c = [1, 3, 5].map((i) => parseInt(coatHex.slice(i, i + 2), 16) / 255);
+    const lumOf = (v) => 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+    const mix = (v, o, k) => v.map((x, i) => lerp(x, o[i], k));
+    const css = (v, a = 1) => `rgba(${v.map((x) => Math.round(clamp01(x) * 255)).join(",")},${a})`;
+    const BLACK = [0, 0, 0], WHITE = [1, 1, 1], INK = [0.114, 0.114, 0.122];
+    const FUR = [0.97, 0.96, 0.94], GINGER = [0.88, 0.54, 0.24];   // furWhite, ginger
+    const far = (v) => (lumOf(v) > 0.55 ? mix(v, BLACK, 0.1) : mix(v, WHITE, 0.07));   // a touch off, for depth
+    const light = lumOf(c) > 0.55;
+    let body = c, face = c, legs = c, paws = c, tailC = c, earC = c, neckC = c, pa = c, pb = c;
+    if (pattern === "tuxedo") paws = FUR;
+    else if (pattern === "calico") {
+      if (lumOf(c) > 0.7) { pa = GINGER; pb = INK; }
+      else if (c[0] - c[2] > 0.25) { pa = c; pb = INK; }
+      else { pa = c; pb = GINGER; }
+      body = face = legs = paws = neckC = FUR; tailC = earC = pa;
+    } else if (pattern === "colorpoint") {
+      body = mix(c, FUR, light ? 0.55 : 0.8);   // pale body, darker points
+      neckC = body;
+    }
+    PAL.pattern = pattern;
+    PAL.coat = css(body);                     // the main colour: what the body is filled with
+    PAL.coatFar = css(far(body));
+    PAL.pawRim = css(lumOf(body) > 0.55 ? mix(body, BLACK, 0.3) : mix(body, WHITE, 0.22));   // rim around a paw held in front of the face
+    PAL.detail = lumOf(face) > 0.55 ? css(INK, 0.85) : "#ffffff";   // closed and happy eyes (reads on the face colour)
+    PAL.eyeRing = Math.abs(1 - lumOf(face)) < 0.35 ? css(INK, 0.8) : null;   // so white eyes still read on a pale face
+    PAL.head = css(pattern === "colorpoint" ? body : face);
+    PAL.ears = css(earC); PAL.neck = css(neckC); PAL.tail = css(tailC);
+    PAL.leg = css(legs); PAL.legFar = css(far(legs));
+    PAL.paw = css(paws); PAL.pawFar = css(far(paws));
+    PAL.toe = lumOf(paws) > 0.55 ? css(INK, 0.85) : "#ffffff";   // toe lines on a paw over the box rim
+    PAL.stripe = css(light ? mix(c, BLACK, 0.32) : mix(mix(c, BLACK, 0.45), WHITE, lumOf(c) < 0.15 ? 0.12 : 0));   // tabby
+    PAL.white = css(FUR);                                         // tuxedo bib, muzzle and socks
+    PAL.patchA = css(pa); PAL.patchB = css(pb);                   // calico patches
+    PAL.point = css(c); PAL.pointClear = css(c, 0);               // colourpoint face mask
   }
-  setCoat(opts.coat || "#1d1d1f");
+  function setCoat(hex) { coatHex = hex; buildPalette(); }
+  function setPattern(name) { if (PATTERNS.includes(name)) { pattern = name; buildPalette(); } }
+  buildPalette();
   // The "Kraft" box colour, shaded the way Palette does it.
   const BOX = {};
   {
@@ -1201,24 +1232,116 @@ window.DeskCat = { mount(stage, opts = {}) {
     for (let i = 0; i < 4; i++) { const k = 1 + i * 0.22; ctx.beginPath(); ctx.ellipse(x, y, rx * k, ry * k, 0, 0, PI * 2); ctx.fill(); }
     ctx.restore();
   }
-  /** Smooth bean between the hip and chest circles. */
+  /** Whether a polygon runs anticlockwise (angles increasing). Circles added to a path must wind the
+      same way as the rest of it, or the overlaps cancel out and leave holes (with the default non-zero fill and clip). */
+  function windsCCW(pts) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; area += p.x * q.y - q.x * p.y; }
+    return area > 0;
+  }
+  function addCircle(path, c, r, ccw) { path.moveTo(c.x + r, c.y); path.arc(c.x, c.y, r, 0, ccw ? PI * 2 : -PI * 2, !ccw); path.closePath(); }
+  /** Smooth bean between the hip and chest circles, filled with the body colour. Returns its
+      outline (a Path2D), for clipping the markings to it. */
   function bean(a, ra, b, rb, back, belly) {
     const dx = b.x - a.x, dy = b.y - a.y, dd = Math.max(hypot(dx, dy), 1), nx = -dy / dd, ny = dx / dd;
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, mr = (ra + rb) / 2;
-    ctx.fillStyle = PAL.coat; ctx.beginPath();
-    ctx.moveTo(a.x + nx * ra, a.y + ny * ra);
-    ctx.quadraticCurveTo(mx + nx * (mr + back), my + ny * (mr + back), b.x + nx * rb, b.y + ny * rb);
-    ctx.lineTo(b.x - nx * rb, b.y - ny * rb);
-    ctx.quadraticCurveTo(mx - nx * (mr + belly), my - ny * (mr + belly), a.x - nx * ra, a.y - ny * ra);
-    ctx.closePath(); ctx.fill();
-    circle(a.x, a.y, ra, PAL.coat); circle(b.x, b.y, rb, PAL.coat);
+    const path = new Path2D();
+    path.moveTo(a.x + nx * ra, a.y + ny * ra);
+    path.quadraticCurveTo(mx + nx * (mr + back), my + ny * (mr + back), b.x + nx * rb, b.y + ny * rb);
+    path.lineTo(b.x - nx * rb, b.y - ny * rb);
+    path.quadraticCurveTo(mx - nx * (mr + belly), my - ny * (mr + belly), a.x - nx * ra, a.y - ny * ra);
+    path.closePath();
+    const ccw = windsCCW([{ x: a.x + nx, y: a.y + ny }, { x: b.x + nx, y: b.y + ny }, { x: b.x - nx, y: b.y - ny }, { x: a.x - nx, y: a.y - ny }]);
+    addCircle(path, a, ra, ccw); addCircle(path, b, rb, ccw);
+    ctx.fillStyle = PAL.coat; ctx.fill(path);
+    return path;
   }
-  function drawLeg(L, color, outline) {
+  /** The pattern's markings on the body, clipped to it. `up` is which side of the hip-to-chest
+      line the back is on (1 or -1, as the cat faces); 0 means seen from the front, while climbing. */
+  function bodyMarkings(body, a, ra, b, rb, up, unit) {
+    const pt = PAL.pattern;
+    if (pt === "solid" || pt === "colorpoint") return;
+    const dx = b.x - a.x, dy = b.y - a.y, dd = Math.max(hypot(dx, dy), 1);
+    const ux = dx / dd, uy = dy / dd;                 // hips → chest
+    const nx = -uy * up, ny = ux * up;                // toward the back
+    const at = (t, n, along = 0) => ({ x: lerp(a.x, b.x, t) + nx * n + ux * along, y: lerp(a.y, b.y, t) + ny * n + uy * along });
+    ctx.save();
+    ctx.clip(body);
+    if (pt === "tabby") {
+      ctx.strokeStyle = PAL.stripe; ctx.lineCap = "round"; ctx.lineWidth = 3.4 * unit; ctx.beginPath();
+      if (up === 0) {           // from the front: bands across the body
+        for (const t of [-0.25, 0.1, 0.45]) {
+          const c = at(t, 0);
+          ctx.moveTo(c.x - 20 * unit, c.y - 3 * unit); ctx.quadraticCurveTo(c.x, c.y + 4 * unit, c.x + 20 * unit, c.y - 3 * unit);
+        }
+      } else {                  // stripes down from the spine, leaning back toward the hips
+        for (const t of [-0.15, 0.1, 0.35, 0.6, 0.85]) {
+          const r = lerp(ra, rb, clamp01(t)), p0 = at(t, r + 3 * unit, -4 * unit), cp = at(t, r * 0.5, -1 * unit), p1 = at(t, -r * 0.15, 1 * unit);
+          ctx.moveTo(p0.x, p0.y); ctx.quadraticCurveTo(cp.x, cp.y, p1.x, p1.y);
+        }
+      }
+      ctx.stroke();
+    } else if (pt === "tuxedo") {
+      if (up === 0) {           // bib down the chest and belly
+        const c = at(1, 0), m = at(0.4, 0);
+        ellipse(c.x, c.y - rb * 0.15, rb * 0.7, rb * 0.95, PAL.white);
+        ellipse(m.x, m.y, ra * 0.55, ra * 0.8, PAL.white);
+      } else {                  // white chest, and white along the belly
+        const c = at(1, -rb * 0.55, rb * 0.45), m = at(0.45, -(ra + rb) * 0.62), r = (ra + rb) * 0.42;
+        circle(c.x, c.y, rb * 0.85, PAL.white);
+        ellipse(m.x, m.y, r * 1.3, r, PAL.white);
+      }
+    } else if (pt === "calico") {
+      const back = up === 0 ? 0 : 1, side = up === 0 ? 1 : 0;   // from the front, patches sit to either side
+      const h = at(0, ra * 0.55 * back, 0);
+      circle(h.x - side * ra * 0.5, h.y, ra * 0.95, PAL.patchA);
+      const c = at(0.95, rb * 0.6 * back, -rb * 0.15);
+      circle(c.x + side * rb * 0.55, c.y + side * rb * 0.2, rb * 0.7, PAL.patchB);
+      const m = at(0.5, (ra + rb) * 0.5 * back);
+      circle(m.x + side * 6 * unit, m.y, (ra + rb) * 0.22, PAL.patchB);
+    }
+    ctx.restore();
+  }
+  /** The head's fur and markings, in head space (face toward +x; eyes go on top after). */
+  function paintHead(frontOn) {
+    const pt = PAL.pattern;
+    ctx.fillStyle = PAL.head; headPath(25, 21); ctx.fill();
+    if (pt === "solid") return;
+    ctx.save();
+    headPath(25, 21); ctx.clip();
+    const mid = frontOn ? 0 : 3;   // the face's centre line: in profile the face sits forward, at the nose side
+    if (pt === "tabby") {          // an M on the forehead and stripes on the cheeks
+      ctx.strokeStyle = PAL.stripe; ctx.lineCap = "round"; ctx.lineWidth = 2.6; ctx.beginPath();
+      for (const [x, top] of [[mid - 7, 19], [mid, 21], [mid + 7, 19]]) { ctx.moveTo(x, top); ctx.lineTo(x + (x - mid) * 0.15, 12); }
+      for (const y of [-2, -8]) {
+        ctx.moveTo(-26, y); ctx.lineTo(-18, y + 2);
+        if (frontOn) { ctx.moveTo(26, y); ctx.lineTo(18, y + 2); }
+      }
+      ctx.stroke();
+    } else if (pt === "tuxedo") {  // white muzzle and chin, with a blaze up between the eyes
+      ellipse(mid, -14, 14, 10, PAL.white);
+      ctx.fillStyle = PAL.white; ctx.beginPath();
+      ctx.moveTo(mid - 6, -6);
+      ctx.quadraticCurveTo(mid - 1.5, 4, mid, 12);
+      ctx.quadraticCurveTo(mid + 1.5, 4, mid + 6, -6);
+      ctx.closePath(); ctx.fill();
+    } else if (pt === "calico") {  // a patch of each colour on the crown, white face between
+      ellipse(mid - 17, 20, 15, 11, PAL.patchA);
+      ellipse(mid + 16, 19, 12, 10, PAL.patchB);
+    } else if (pt === "colorpoint") {   // a dark mask that fades out toward the crown and cheeks
+      const cx = mid + 1, cy = -2, g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 23);
+      g.addColorStop(0, PAL.point); g.addColorStop(0.62, PAL.point); g.addColorStop(1, PAL.pointClear);
+      ctx.fillStyle = g; ctx.fillRect(cx - 23, cy - 23, 46, 46);
+    }
+    ctx.restore();
+  }
+  function drawLeg(L, color, paw, outline) {
     const a = toWorld(L.a.x, L.a.y), k = toWorld(L.k.x, L.k.y), f = toWorld(L.f.x, L.f.y);
     const dir = facing.x >= 0 ? 1 : -1, s = scale, fx = f.x + 1.5 * dir * s, fy = f.y + s;
     if (outline) { line(k, f, 10 * s, outline); ellipse(fx, fy, 6.6 * s, 5.6 * s, outline); }
     line(a, k, 9.5 * s, color); line(k, f, 7.5 * s, color);
-    ellipse(fx, fy, 5.2 * s, 4.2 * s, color);
+    if (paw !== color) line({ x: lerp(k.x, f.x, 0.45), y: lerp(k.y, f.y, 0.45) }, f, 7.5 * s, paw);   // socks: the lower half of the leg and the paw
+    ellipse(fx, fy, 5.2 * s, 4.2 * s, paw);
   }
   /** One smooth, tapered shape along a curve through the tail's points, rather than a chain of
       separate round-capped strokes (those show a bump at every joint once the tail curls). */
@@ -1246,16 +1369,29 @@ window.DeskCat = { mount(stage, opts = {}) {
       left.push({ x: pts[i].x + nx * w, y: pts[i].y + ny * w });
       right.push({ x: pts[i].x - nx * w, y: pts[i].y - ny * w });
     }
-    ctx.fillStyle = PAL.coat;
-    ctx.beginPath();
-    ctx.moveTo(left[0].x, left[0].y);
-    for (let i = 1; i < m; i++) ctx.lineTo(left[i].x, left[i].y);
+    const shape = new Path2D();
+    shape.moveTo(left[0].x, left[0].y);
+    for (let i = 1; i < m; i++) shape.lineTo(left[i].x, left[i].y);
     const end = pts[m - 1], pre = pts[m - 2], ta = Math.atan2(end.y - pre.y, end.x - pre.x);
-    ctx.arc(end.x, end.y, end.w, ta + PI / 2, ta - PI / 2, true);   // rounded tip
-    for (let i = m - 1; i >= 0; i--) ctx.lineTo(right[i].x, right[i].y);
-    ctx.closePath();
-    ctx.fill();
-    circle(pts[0].x, pts[0].y, pts[0].w, PAL.coat);
+    shape.arc(end.x, end.y, end.w, ta + PI / 2, ta - PI / 2, true);   // rounded tip
+    for (let i = m - 1; i >= 0; i--) shape.lineTo(right[i].x, right[i].y);
+    shape.closePath();
+    addCircle(shape, pts[0], pts[0].w, windsCCW([...left, ...[...right].reverse()]));   // root, under the body
+    ctx.fillStyle = PAL.tail;
+    ctx.fill(shape);
+    if (PAL.pattern === "tabby") {   // rings, closer together toward the tip, and a dark tip
+      ctx.save();
+      ctx.clip(shape);
+      ctx.strokeStyle = PAL.stripe; ctx.lineCap = "butt"; ctx.lineWidth = 3.2 * scale;
+      ctx.beginPath();
+      for (const u of [0.3, 0.48, 0.63, 0.76, 0.87]) {
+        const j = Math.floor(u * (m - 1));
+        ctx.moveTo(left[j].x, left[j].y); ctx.lineTo(right[j].x, right[j].y);
+      }
+      ctx.stroke();
+      circle(end.x, end.y, end.w * 1.6, PAL.stripe);
+      ctx.restore();
+    }
   }
   /** Rounded head: a superellipse, slightly wider and flatter at the cheeks. */
   function headPath(a, b) {
@@ -1268,10 +1404,10 @@ window.DeskCat = { mount(stage, opts = {}) {
     }
     ctx.closePath();
   }
-  function ear(b1, b2, tip, rot) {
+  function ear(b1, b2, tip, rot, color) {
     const mx = (b1.x + b2.x) / 2, my = (b1.y + b2.y) / 2;
     ctx.save(); ctx.translate(mx, my); ctx.rotate(rot); ctx.translate(-mx, -my);
-    ctx.fillStyle = PAL.coat; ctx.beginPath(); ctx.moveTo(b1.x, b1.y);
+    ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(b1.x, b1.y);
     ctx.quadraticCurveTo(lerp(b1.x, tip.x, 0.5) - 2.5, lerp(b1.y, tip.y, 0.5) + 1, tip.x, tip.y);
     ctx.quadraticCurveTo(lerp(b2.x, tip.x, 0.5) + 1.5, lerp(b2.y, tip.y, 0.5) + 2, b2.x, b2.y);
     ctx.closePath(); ctx.fill(); ctx.restore();
@@ -1312,9 +1448,9 @@ window.DeskCat = { mount(stage, opts = {}) {
     ctx.save();
     ctx.translate(c.x, c.y); ctx.rotate(lean.x + swing.x * 0.5);
     ctx.scale(turnScale(hf, 0.6) * scale, sy * scale); ctx.rotate(a);
-    ear({ x: -22, y: 8 }, { x: -7, y: 18 }, { x: -18, y: 34 }, earL.x * 0.9);
-    ear({ x: 6, y: 18 }, { x: 21, y: 9 }, { x: 19, y: 34 }, -earR.x * 0.9);
-    ctx.fillStyle = PAL.coat; headPath(25, 21); ctx.fill();
+    ear({ x: -22, y: 8 }, { x: -7, y: 18 }, { x: -18, y: 34 }, earL.x * 0.9, PAL.ears);
+    ear({ x: 6, y: 18 }, { x: 21, y: 9 }, { x: 19, y: 34 }, -earR.x * 0.9, PAL.pattern === "calico" ? PAL.patchB : PAL.ears);
+    paintHead(false);
     // gaze in head space (undo the head's own flip and tilt)
     const flip = hf >= 0 ? 1 : -1, gzx = gx.x * flip, gzy = gy.x;
     const rx = gzx * cos(a) + gzy * sin(a), ry = -gzx * sin(a) + gzy * cos(a);
@@ -1362,25 +1498,26 @@ window.DeskCat = { mount(stage, opts = {}) {
     ctx.save();
     if (boxClip != null) { ctx.beginPath(); ctx.rect(-10000, boxClip, 30000, 20000); ctx.clip(); }
     drawTail();
-    drawLeg(sk.legs.fb, PAL.coatFar); drawLeg(sk.legs.ff, PAL.coatFar);
+    drawLeg(sk.legs.fb, PAL.legFar, PAL.pawFar); drawLeg(sk.legs.ff, PAL.legFar, PAL.pawFar);
     const hip = toWorld(p.hx, p.hy), chest = toWorld(p.cx, p.cy);
     const sy = squash.x, sx = 1 + (1 - sy) * 0.7, vol = Math.sqrt(sx * sy) * s;
     const back = lerp(-1.5, 2.5, clamp01(crouch.x)), belly = lerp(-2, -4, clamp01(lie.x));
-    bean(hip, p.hr * vol, chest, p.cr * vol, back, belly);
-    line(chest, toWorld(p.kx, p.ky), 17 * s, PAL.coat);   // neck
+    line(chest, toWorld(p.kx, p.ky), 17 * s, PAL.neck);   // neck
+    const body = bean(hip, p.hr * vol, chest, p.cr * vol, back, belly);
+    bodyMarkings(body, hip, p.hr * vol, chest, p.cr * vol, facing.x >= 0 ? 1 : -1, s);
     const heldRim = hold.x > 0.5 ? PAL.pawRim : null;     // dangling legs cross the body: a thin rim keeps them readable
-    drawLeg(sk.legs.nb, PAL.coat, heldRim);
+    drawLeg(sk.legs.nb, PAL.leg, PAL.paw, heldRim);
     const pawUp = Math.max(paw.x, groom.x) > 0.3;
-    if (!pawUp && (boxClip == null || rim.x < 0.5)) drawLeg(sk.legs.nf, PAL.coat, heldRim);
+    if (!pawUp && (boxClip == null || rim.x < 0.5)) drawLeg(sk.legs.nf, PAL.leg, PAL.paw, heldRim);
     drawHead(sk);
-    if (pawUp) drawLeg(sk.legs.nf, PAL.coat, PAL.pawRim);
+    if (pawUp) drawLeg(sk.legs.nf, PAL.leg, PAL.paw, PAL.pawRim);
     ctx.restore();
     // paws hooked over the rim sit in front of the box, so they're drawn unclipped
     if (boxClip != null && rim.x >= 0.5) {
       for (const id of ["ff", "nf"]) {
         const f = toWorld(sk.legs[id].f.x, sk.legs[id].f.y);
-        ellipse(f.x, f.y, 6.5 * s, 5 * s, PAL.coat);
-        ctx.strokeStyle = PAL.detail; ctx.lineWidth = 1.3 * s; ctx.lineCap = "round"; ctx.beginPath();
+        ellipse(f.x, f.y, 6.5 * s, 5 * s, PAL.paw);
+        ctx.strokeStyle = PAL.toe; ctx.lineWidth = 1.3 * s; ctx.lineCap = "round"; ctx.beginPath();
         for (const dx of [-2.2, 2.2]) { ctx.moveTo(f.x + dx * s, f.y - 4.5 * s); ctx.lineTo(f.x + dx * s, f.y - 1.8 * s); }
         ctx.stroke();
       }
@@ -1402,15 +1539,17 @@ window.DeskCat = { mount(stage, opts = {}) {
     ctx.scale(s, s);
     const limb = (a, b, out, upper, lower) => {   // the joint bows outwards, like elbows and knees seen from the front
       const m = { x: (a.x + b.x) / 2 + out, y: (a.y + b.y) / 2 };
-      line(a, m, upper, PAL.coat); line(m, b, lower, PAL.coat);
-      ellipse(b.x, b.y, 5.4, 4.6, PAL.coat);
+      line(a, m, upper, PAL.leg); line(m, b, lower, PAL.leg);
+      if (PAL.paw !== PAL.leg) line({ x: lerp(m.x, b.x, 0.5), y: lerp(m.y, b.y, 0.5) }, b, lower, PAL.paw);   // socks
+      ellipse(b.x, b.y, 5.4, 4.6, PAL.paw);
     };
     const hips = { x: 0, y: climbHipY() }, chest = { x: 0, y: -22 + 2 * squeeze };
     for (const side of [-1, 1]) {
       const foot = { x: side * (16 + 2 * squeeze), y: -70 + 14 * squeeze * (side === climbLead ? 1 : 0.9) };
       limb({ x: side * 8, y: hips.y - 2 }, foot, side * (6 + 5 * squeeze), 11, 8);
     }
-    bean(hips, 14, chest, 15, 0, 0);
+    const body = bean(hips, 14, chest, 15, 0, 0);
+    bodyMarkings(body, hips, 14, chest, 15, 0, 1);
     const reach = clamp01(climbReach.x);
     for (const side of [-1, 1]) {
       const order = side === climbLead ? 0 : 1;
@@ -1424,9 +1563,9 @@ window.DeskCat = { mount(stage, opts = {}) {
     }
     ctx.translate(0, 6 - 1.5 * squeeze);
     ctx.rotate(tilt.x * 0.5);
-    ear({ x: -23, y: 8 }, { x: -8, y: 18 }, { x: -19, y: 34 }, earL.x * 0.9);
-    ear({ x: 8, y: 18 }, { x: 23, y: 8 }, { x: 19, y: 34 }, -earR.x * 0.9);
-    ctx.fillStyle = PAL.coat; headPath(25, 21); ctx.fill();
+    ear({ x: -23, y: 8 }, { x: -8, y: 18 }, { x: -19, y: 34 }, earL.x * 0.9, PAL.ears);
+    ear({ x: 8, y: 18 }, { x: 23, y: 8 }, { x: 19, y: 34 }, -earR.x * 0.9, PAL.pattern === "calico" ? PAL.patchB : PAL.ears);
+    paintHead(true);
     eye(-9, 3, 8, gx.x, gy.x); eye(9, 3, 8, gx.x, gy.x);
     ctx.restore();
     for (const h of hearts) drawHeart(h);
@@ -1698,7 +1837,7 @@ window.DeskCat = { mount(stage, opts = {}) {
   // for poking at it from the console
   window.__deskcat = { get act() { return act; }, pos, toy, box, audio, get W() { return W; }, get H() { return H; } };
   return {
-    isHome, letOut, callHome, setToy, setCoat, drawToyIcon,
+    isHome, letOut, callHome, setToy, setCoat, setPattern, drawToyIcon,
     setMuted(m) { audio.muted = m; applyVolume(); if (!m) audioStart(); },
     setVolume(v) { audio.volume = clamp01(v); applyVolume(); },
     setName(n) { catName = String(n).trim().slice(0, 14); },

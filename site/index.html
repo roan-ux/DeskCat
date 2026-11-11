@@ -47,6 +47,7 @@
       </button>
     </div>
     <div class="coats" role="group" aria-label="Coat colour"></div>
+    <div class="patterns" role="group" aria-label="Coat pattern"></div>
     <div class="sound">
     <button id="sound" type="button" aria-pressed="true" aria-label="Sound" title="Sound on">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -110,6 +111,14 @@
   const COATS = [["#1d1d1f", "Black"], ["#5c5e66", "Charcoal"], ["#e08a3d", "Ginger"], ["#f2e3c7", "Cream"], ["#f7f7f5", "White"]];
   let coat = store.get("deskcat-coat");
   if (!COATS.some(([c]) => c === coat)) coat = COATS[0][0];
+  // The Mac app's coat patterns (CoatPattern in Look.swift): the coat colour stays the main colour.
+  const PATTERNS = [["solid", "Solid", "One colour all over"],
+    ["tabby", "Tabby", "Darker stripes, rings on the tail and an M on the forehead"],
+    ["tuxedo", "Tuxedo", "White chest, muzzle and paws"],
+    ["calico", "Calico", "White with patches of the coat colour and a second colour"],
+    ["colorpoint", "Siamese", "Pale body; face, ears, legs and tail in the coat colour"]];
+  let pattern = store.get("deskcat-pattern");
+  if (!PATTERNS.some(([p]) => p === pattern)) pattern = PATTERNS[0][0];
 
   const name = document.getElementById("name"), toggle = document.getElementById("toggle");
   name.value = store.get("deskcat-name") ?? name.value;
@@ -117,7 +126,7 @@
   let volume = Number(store.get("deskcat-volume") ?? 40);
   if (!(volume >= 0 && volume <= 100)) volume = 40;
   const deskcat = DeskCat.mount(document.getElementById("stage"), {
-    name: name.value, coat, muted, volume: volume / 100,
+    name: name.value, coat, pattern, muted, volume: volume / 100,
     onChange: (label, home) => { toggle.textContent = home ? "Let it out" : "Call it back"; },
   });
   toggle.addEventListener("click", () => (deskcat.isHome() ? deskcat.letOut() : deskcat.callHome()));
@@ -168,6 +177,17 @@
       for (const o of coats.children) o.setAttribute("aria-pressed", String(o === b));
     });
     coats.appendChild(b);
+  }
+  const patterns = document.querySelector(".patterns");
+  for (const [id, label, help] of PATTERNS) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "pattern"; b.textContent = label; b.title = help;
+    b.setAttribute("aria-pressed", String(id === pattern));
+    b.addEventListener("click", () => {
+      pattern = id; deskcat.setPattern(id); store.set("deskcat-pattern", id);
+      for (const o of patterns.children) o.setAttribute("aria-pressed", String(o === b));
+    });
+    patterns.appendChild(b);
   }
 
 

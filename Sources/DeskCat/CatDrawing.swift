@@ -31,20 +31,21 @@ extension CatSim {
             ctx.clip(to: CGRect(x: -100_000, y: clipY, width: 200_000, height: 100_000))
         }
         drawTail(ctx)
-        drawLeg(ctx, sk.legs[.fb], pal.coatFar)
-        drawLeg(ctx, sk.legs[.ff], pal.coatFar)
+        drawLeg(ctx, sk.legs[.fb], pal.legFar, paw: pal.pawFar)
+        drawLeg(ctx, sk.legs[.ff], pal.legFar, paw: pal.pawFar)
         let hip = toWorld(p.hx, p.hy), chest = toWorld(p.cx, p.cy)
         let sy = squash.x, sx = 1 + (1 - sy) * 0.7, vol = sqrt(sx * sy) * s
         let back = lerp(-1.5, 2.5, clamp01(crouch.x)), belly = lerp(-2, -4, clamp01(lie.x))
-        bean(ctx, hip, p.hr * vol, chest, p.cr * vol, back: back, belly: belly)
-        line(ctx, chest, toWorld(p.kx, p.ky), 17 * s, pal.coat)   // neck
+        line(ctx, chest, toWorld(p.kx, p.ky), 17 * s, pal.neck)   // neck
+        let body = bean(ctx, hip, p.hr * vol, chest, p.cr * vol, back: back, belly: belly)
+        bodyMarkings(ctx, body, hip, p.hr * vol, chest, p.cr * vol, up: facing.x >= 0 ? 1 : -1, unit: s)
         let heldRim = hold.x > 0.5 ? pal.pawRim : nil   // dangling legs cross the body: a thin rim keeps them readable
-        drawLeg(ctx, sk.legs[.nb], pal.coat, outline: heldRim)
+        drawLeg(ctx, sk.legs[.nb], pal.leg, paw: pal.paw, outline: heldRim)
         let pawUp = max(paw.x, groom.x) > 0.3
-        if !pawUp && (boxClip == nil || rim.x < 0.5) { drawLeg(ctx, sk.legs[.nf], pal.coat, outline: heldRim) }
+        if !pawUp && (boxClip == nil || rim.x < 0.5) { drawLeg(ctx, sk.legs[.nf], pal.leg, paw: pal.paw, outline: heldRim) }
         drawHead(ctx, sk)
         // A paw in front of the face gets a faint rim so it still reads against the head.
-        if pawUp { drawLeg(ctx, sk.legs[.nf], pal.coat, outline: pal.pawRim) }
+        if pawUp { drawLeg(ctx, sk.legs[.nf], pal.leg, paw: pal.paw, outline: pal.pawRim) }
         ctx.restoreGState()
 
         // Paws hooked over the rim sit in front of the box, so they're drawn unclipped.
@@ -52,9 +53,9 @@ extension CatSim {
             for id in [LegID.ff, .nf] {
                 guard let leg = sk.legs[id] else { continue }
                 let f = toWorld(leg.foot.x, leg.foot.y)
-                ctx.setFillColor(pal.coat)
+                ctx.setFillColor(pal.paw)
                 ctx.fillEllipse(in: CGRect(x: f.x - 6.5 * s, y: f.y - 5 * s, width: 13 * s, height: 10 * s))
-                ctx.setStrokeColor(pal.detail)
+                ctx.setStrokeColor(pal.toe)
                 ctx.setLineWidth(1.3 * s)
                 ctx.setLineCap(.round)
                 for dx: CGFloat in [-2.2, 2.2] {
@@ -91,7 +92,8 @@ extension CatSim {
             let m = CGPoint(x: (a.x + b.x) / 2 + out, y: (a.y + b.y) / 2)
             line(ctx, a, m, upper, color)
             line(ctx, m, b, lower, color)
-            ctx.setFillColor(color)
+            if pal.paw != color { line(ctx, CGPoint(x: lerp(m.x, b.x, 0.5), y: lerp(m.y, b.y, 0.5)), b, lower, pal.paw) }
+            ctx.setFillColor(pal.paw)
             ctx.fillEllipse(in: CGRect(x: b.x - 5.4, y: b.y - 4.6, width: 10.8, height: 9.2))
         }
         let hips = CGPoint(x: 0, y: climbHipY), chest = CGPoint(x: 0, y: -22 + 2 * squeeze)
@@ -100,11 +102,12 @@ extension CatSim {
             for side: CGFloat in [-1, 1] {
                 // tucks up partway (feet stay below the hips), knees out to the sides
                 let foot = CGPoint(x: side * (16 + 2 * squeeze), y: -70 + 14 * squeeze * (side == climbLead ? 1 : 0.9))
-                limb(CGPoint(x: side * 8, y: hips.y - 2), foot, out: side * (6 + 5 * squeeze), pal.coat, upper: 11, lower: 8)
+                limb(CGPoint(x: side * 8, y: hips.y - 2), foot, out: side * (6 + 5 * squeeze), pal.leg, upper: 11, lower: 8)
             }
         }
         backLegs()
-        bean(ctx, hips, 14, chest, 15, back: 0, belly: 0)
+        let body = bean(ctx, hips, 14, chest, 15, back: 0, belly: 0)
+        bodyMarkings(ctx, body, hips, 14, chest, 15, up: 0, unit: 1)
         // front legs: hold while it pushes (so they bend as the body rises past them), then re-hook
         // higher one after the other. At the top, the paw on the toy's side stretches for it.
         let reach = clamp01(climbReach.x)
@@ -118,16 +121,15 @@ extension CatSim {
                 let up = CGPoint(x: side * 25, y: 42 + sin(time * 14) * 3)
                 paw = CGPoint(x: lerp(paw.x, up.x, reach), y: lerp(paw.y, up.y, reach))
             }
-            limb(CGPoint(x: side * 11, y: chest.y + 2 + bob), paw, out: side * (6 + 3 * low), pal.coat, upper: 10, lower: 8)
+            limb(CGPoint(x: side * 11, y: chest.y + 2 + bob), paw, out: side * (6 + 3 * low), pal.leg, upper: 10, lower: 8)
         }
         // head, face on, looking up at the toy
         ctx.translateBy(x: 0, y: 6 - 1.5 * squeeze)
         ctx.rotate(by: tilt.x * 0.5)
-        ear(ctx, CGPoint(x: -23, y: 8), CGPoint(x: -8, y: 18), CGPoint(x: -19, y: 34), earL.x * 0.9)
-        ear(ctx, CGPoint(x: 8, y: 18), CGPoint(x: 23, y: 8), CGPoint(x: 19, y: 34), -earR.x * 0.9)
-        ctx.setFillColor(pal.coat)
-        headPath(ctx, 25, 21)
-        ctx.fillPath()
+        ear(ctx, CGPoint(x: -23, y: 8), CGPoint(x: -8, y: 18), CGPoint(x: -19, y: 34), earL.x * 0.9, pal.ears)
+        ear(ctx, CGPoint(x: 8, y: 18), CGPoint(x: 23, y: 8), CGPoint(x: 19, y: 34), -earR.x * 0.9,
+            pal.pattern == .calico ? pal.patchB : pal.ears)
+        paintHead(ctx, frontOn: true)
         eye(ctx, -9, 3, 8, gx.x, gy.x)
         eye(ctx, 9, 3, 8, gx.x, gy.x)
         ctx.restoreGState()
@@ -150,26 +152,166 @@ extension CatSim {
         ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
     }
 
-    /// Smooth bean between the hip and chest circles.
-    private func bean(_ ctx: CGContext, _ a: CGPoint, _ ra: CGFloat, _ b: CGPoint, _ rb: CGFloat, back: CGFloat, belly: CGFloat) {
+    /// Smooth bean between the hip and chest circles, filled with the body colour. Returns its
+    /// outline, for clipping the markings to it.
+    @discardableResult
+    private func bean(_ ctx: CGContext, _ a: CGPoint, _ ra: CGFloat, _ b: CGPoint, _ rb: CGFloat, back: CGFloat, belly: CGFloat) -> CGPath {
         let dx = b.x - a.x, dy = b.y - a.y, d = max(hypot(dx, dy), 1)
         let nx = -dy / d, ny = dx / d
         let mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, mr = (ra + rb) / 2
-        let coat = Palette.current.coat
-        ctx.setFillColor(coat)
-        ctx.move(to: CGPoint(x: a.x + nx * ra, y: a.y + ny * ra))
-        ctx.addQuadCurve(to: CGPoint(x: b.x + nx * rb, y: b.y + ny * rb),
-                         control: CGPoint(x: mx + nx * (mr + back), y: my + ny * (mr + back)))
-        ctx.addLine(to: CGPoint(x: b.x - nx * rb, y: b.y - ny * rb))
-        ctx.addQuadCurve(to: CGPoint(x: a.x - nx * ra, y: a.y - ny * ra),
-                         control: CGPoint(x: mx - nx * (mr + belly), y: my - ny * (mr + belly)))
-        ctx.closePath()
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: a.x + nx * ra, y: a.y + ny * ra))
+        path.addQuadCurve(to: CGPoint(x: b.x + nx * rb, y: b.y + ny * rb),
+                          control: CGPoint(x: mx + nx * (mr + back), y: my + ny * (mr + back)))
+        path.addLine(to: CGPoint(x: b.x - nx * rb, y: b.y - ny * rb))
+        path.addQuadCurve(to: CGPoint(x: a.x - nx * ra, y: a.y - ny * ra),
+                          control: CGPoint(x: mx - nx * (mr + belly), y: my - ny * (mr + belly)))
+        path.closeSubpath()
+        let cw = windsClockwise([CGPoint(x: a.x + nx, y: a.y + ny), CGPoint(x: b.x + nx, y: b.y + ny),
+                                 CGPoint(x: b.x - nx, y: b.y - ny), CGPoint(x: a.x - nx, y: a.y - ny)])
+        addCircle(path, a, ra, clockwise: cw)
+        addCircle(path, b, rb, clockwise: cw)
+        ctx.setFillColor(Palette.current.coat)
+        ctx.addPath(path)
         ctx.fillPath()
-        fillCircle(ctx, a, ra, coat)
-        fillCircle(ctx, b, rb, coat)
+        return path
     }
 
-    private func drawLeg(_ ctx: CGContext, _ leg: Leg?, _ color: CGColor, outline: CGColor? = nil) {
+    /// The pattern's markings on the body, clipped to it. `up` is which side of the hip-to-chest
+    /// line the back is on (1 or -1, as the cat faces); 0 means seen from the front, while climbing.
+    private func bodyMarkings(_ ctx: CGContext, _ body: CGPath, _ a: CGPoint, _ ra: CGFloat, _ b: CGPoint, _ rb: CGFloat,
+                              up: CGFloat, unit: CGFloat) {
+        let pal = Palette.current
+        guard pal.pattern != .solid && pal.pattern != .colorpoint else { return }
+        let dx = b.x - a.x, dy = b.y - a.y, d = max(hypot(dx, dy), 1)
+        let ux = dx / d, uy = dy / d                              // hips → chest
+        let nx = -uy * up, ny = ux * up                           // toward the back
+        func at(_ t: CGFloat, _ n: CGFloat, _ along: CGFloat = 0) -> CGPoint {   // t along the body, n toward the back
+            CGPoint(x: lerp(a.x, b.x, t) + nx * n + ux * along, y: lerp(a.y, b.y, t) + ny * n + uy * along)
+        }
+        ctx.saveGState()
+        ctx.addPath(body)
+        ctx.clip()
+        switch pal.pattern {
+        case .tabby:
+            ctx.setStrokeColor(pal.stripe)
+            ctx.setLineCap(.round)
+            ctx.setLineWidth(3.4 * unit)
+            if up == 0 {            // from the front: bands across the body
+                for t: CGFloat in [-0.25, 0.1, 0.45] {
+                    let c = at(t, 0)
+                    ctx.move(to: CGPoint(x: c.x - 20 * unit, y: c.y - 3 * unit))
+                    ctx.addQuadCurve(to: CGPoint(x: c.x + 20 * unit, y: c.y - 3 * unit), control: CGPoint(x: c.x, y: c.y + 4 * unit))
+                }
+            } else {                // stripes down from the spine, leaning back toward the hips
+                for t: CGFloat in [-0.15, 0.1, 0.35, 0.6, 0.85] {
+                    let r = lerp(ra, rb, clamp01(t))
+                    ctx.move(to: at(t, r + 3 * unit, -4 * unit))
+                    ctx.addQuadCurve(to: at(t, -r * 0.15, 1 * unit), control: at(t, r * 0.5, -1 * unit))
+                }
+            }
+            ctx.strokePath()
+        case .tuxedo:
+            ctx.setFillColor(pal.white)
+            if up == 0 {            // bib down the chest and belly
+                let c = at(1, 0)
+                ctx.fillEllipse(in: CGRect(x: c.x - rb * 0.7, y: c.y - rb * 1.1, width: rb * 1.4, height: rb * 1.9))
+                let m = at(0.4, 0)
+                ctx.fillEllipse(in: CGRect(x: m.x - ra * 0.55, y: m.y - ra * 0.8, width: ra * 1.1, height: ra * 1.6))
+            } else {                // white chest, and white along the belly
+                let c = at(1, -rb * 0.55, rb * 0.45)
+                ctx.fillEllipse(in: CGRect(x: c.x - rb * 0.85, y: c.y - rb * 0.85, width: rb * 1.7, height: rb * 1.7))
+                let m = at(0.45, -(ra + rb) * 0.62)
+                let r = (ra + rb) * 0.42
+                ctx.fillEllipse(in: CGRect(x: m.x - r * 1.3, y: m.y - r, width: r * 2.6, height: r * 2))
+            }
+        case .calico:
+            let back = up == 0 ? 0 : 1 as CGFloat
+            let side: CGFloat = up == 0 ? 1 : 0                   // from the front, patches sit to either side
+            let h = at(0, ra * 0.55 * back, 0)
+            fillCircle(ctx, CGPoint(x: h.x - side * ra * 0.5, y: h.y), ra * 0.95, pal.patchA)
+            let c = at(0.95, rb * 0.6 * back, -rb * 0.15)
+            fillCircle(ctx, CGPoint(x: c.x + side * rb * 0.55, y: c.y + side * rb * 0.2), rb * 0.7, pal.patchB)
+            let m = at(0.5, (ra + rb) * 0.5 * back)
+            fillCircle(ctx, CGPoint(x: m.x + side * 6 * unit, y: m.y), (ra + rb) * 0.22, pal.patchB)
+        case .solid, .colorpoint:
+            break
+        }
+        ctx.restoreGState()
+    }
+
+    /// The head's fur and markings, in head space (face toward +x; eyes go on top after).
+    private func paintHead(_ ctx: CGContext, frontOn: Bool) {
+        let pal = Palette.current
+        ctx.setFillColor(pal.head)
+        headPath(ctx, 25, 21)
+        ctx.fillPath()
+        guard pal.pattern != .solid else { return }
+        ctx.saveGState()
+        headPath(ctx, 25, 21)
+        ctx.clip()
+        // where the face's centre line is: in profile the face sits forward, at the nose side
+        let mid: CGFloat = frontOn ? 0 : 3
+        switch pal.pattern {
+        case .tabby:            // an M on the forehead and stripes on the cheeks
+            ctx.setStrokeColor(pal.stripe)
+            ctx.setLineCap(.round)
+            ctx.setLineWidth(2.6)
+            for (x, top) in [(mid - 7, 19.0), (mid, 21.0), (mid + 7, 19.0)] as [(CGFloat, CGFloat)] {
+                ctx.move(to: CGPoint(x: x, y: top)); ctx.addLine(to: CGPoint(x: x + (x - mid) * 0.15, y: 12))
+            }
+            for y: CGFloat in [-2, -8] {
+                ctx.move(to: CGPoint(x: -26, y: y)); ctx.addLine(to: CGPoint(x: -18, y: y + 2))
+                if frontOn { ctx.move(to: CGPoint(x: 26, y: y)); ctx.addLine(to: CGPoint(x: 18, y: y + 2)) }
+            }
+            ctx.strokePath()
+        case .tuxedo:           // white muzzle and chin, with a blaze up between the eyes
+            ctx.setFillColor(pal.white)
+            ctx.fillEllipse(in: CGRect(x: mid - 14, y: -24, width: 28, height: 20))
+            ctx.move(to: CGPoint(x: mid - 6, y: -6))
+            ctx.addQuadCurve(to: CGPoint(x: mid, y: 12), control: CGPoint(x: mid - 1.5, y: 4))
+            ctx.addQuadCurve(to: CGPoint(x: mid + 6, y: -6), control: CGPoint(x: mid + 1.5, y: 4))
+            ctx.closePath()
+            ctx.fillPath()
+        case .calico:           // a patch of each colour on the crown, white face between
+            fillEllipse(ctx, CGPoint(x: mid - 17, y: 20), 15, 11, pal.patchA)
+            fillEllipse(ctx, CGPoint(x: mid + 16, y: 19), 12, 10, pal.patchB)
+        case .colorpoint:       // a dark mask that fades out toward the crown and cheeks
+            let space = CGColorSpace(name: CGColorSpace.sRGB)!
+            let clear = pal.point.copy(alpha: 0) ?? pal.point
+            if let g = CGGradient(colorsSpace: space, colors: [pal.point, pal.point, clear] as CFArray, locations: [0, 0.62, 1]) {
+                let c = CGPoint(x: mid + 1, y: -2)
+                ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: 23, options: [])
+            }
+        case .solid:
+            break
+        }
+        ctx.restoreGState()
+    }
+
+    /// Whether a polygon runs clockwise. Circles added to a path must wind the same way as the rest
+    /// of it, or the overlaps cancel out and leave holes (with the default non-zero fill and clip).
+    private func windsClockwise(_ pts: [CGPoint]) -> Bool {
+        var area: CGFloat = 0
+        for i in pts.indices {
+            let p = pts[i], q = pts[(i + 1) % pts.count]
+            area += p.x * q.y - q.x * p.y
+        }
+        return area < 0
+    }
+
+    private func addCircle(_ path: CGMutablePath, _ c: CGPoint, _ r: CGFloat, clockwise: Bool) {
+        path.move(to: CGPoint(x: c.x + r, y: c.y))
+        path.addArc(center: c, radius: r, startAngle: 0, endAngle: clockwise ? -2 * .pi : 2 * .pi, clockwise: clockwise)
+        path.closeSubpath()
+    }
+
+    private func fillEllipse(_ ctx: CGContext, _ c: CGPoint, _ rx: CGFloat, _ ry: CGFloat, _ color: CGColor) {
+        ctx.setFillColor(color)
+        ctx.fillEllipse(in: CGRect(x: c.x - rx, y: c.y - ry, width: rx * 2, height: ry * 2))
+    }
+
+    private func drawLeg(_ ctx: CGContext, _ leg: Leg?, _ color: CGColor, paw: CGColor, outline: CGColor? = nil) {
         guard let leg else { return }
         let a = toWorld(leg.anchor.x, leg.anchor.y), k = toWorld(leg.knee.x, leg.knee.y), f = toWorld(leg.foot.x, leg.foot.y)
         let dir: CGFloat = facing.x >= 0 ? 1 : -1, s = scale
@@ -181,7 +323,10 @@ extension CatSim {
         }
         line(ctx, a, k, 9.5 * s, color)
         line(ctx, k, f, 7.5 * s, color)
-        ctx.setFillColor(color)
+        if paw != color {       // socks: the lower half of the leg and the paw
+            line(ctx, CGPoint(x: lerp(k.x, f.x, 0.45), y: lerp(k.y, f.y, 0.45)), f, 7.5 * s, paw)
+        }
+        ctx.setFillColor(paw)
         ctx.fillEllipse(in: CGRect(x: fx - 5.2 * s, y: fy - 4.2 * s, width: 10.4 * s, height: 8.4 * s))
     }
 
@@ -218,13 +363,33 @@ extension CatSim {
             left.append(CGPoint(x: pts[j].x + nx * h, y: pts[j].y + ny * h))
             right.append(CGPoint(x: pts[j].x - nx * h, y: pts[j].y - ny * h))
         }
-        let coat = Palette.current.coat
+        let pal = Palette.current, coat = pal.tail
+        let shape = CGMutablePath()
+        let outline = left + right.reversed()
+        shape.addLines(between: outline)
+        shape.closeSubpath()
+        let cw = windsClockwise(outline)
+        addCircle(shape, pts[m - 1], halfWidth(m - 1), clockwise: cw)    // rounded tip
+        addCircle(shape, pts[0], halfWidth(0), clockwise: cw)            // root, under the body
+        let tip = halfWidth(m - 1)
         ctx.setFillColor(coat)
-        ctx.addLines(between: left + right.reversed())
-        ctx.closePath()
+        ctx.addPath(shape)
         ctx.fillPath()
-        fillCircle(ctx, pts[m - 1], halfWidth(m - 1), coat)    // rounded tip
-        fillCircle(ctx, pts[0], halfWidth(0), coat)            // root, under the body
+        if pal.pattern == .tabby {      // rings, closer together toward the tip, and a dark tip
+            ctx.saveGState()
+            ctx.addPath(shape)
+            ctx.clip()
+            ctx.setStrokeColor(pal.stripe)
+            ctx.setLineCap(.butt)
+            for u: CGFloat in [0.3, 0.48, 0.63, 0.76, 0.87] {
+                let j = Int(u * CGFloat(m - 1))
+                ctx.setLineWidth(3.2 * scale)
+                ctx.move(to: left[j]); ctx.addLine(to: right[j])
+                ctx.strokePath()
+            }
+            fillCircle(ctx, pts[m - 1], tip * 1.6, pal.stripe)
+            ctx.restoreGState()
+        }
     }
 
     /// Rounded head: a superellipse, slightly wider and flatter at the cheeks.
@@ -238,13 +403,13 @@ extension CatSim {
         ctx.closePath()
     }
 
-    private func ear(_ ctx: CGContext, _ b1: CGPoint, _ b2: CGPoint, _ tip: CGPoint, _ rot: CGFloat) {
+    private func ear(_ ctx: CGContext, _ b1: CGPoint, _ b2: CGPoint, _ tip: CGPoint, _ rot: CGFloat, _ color: CGColor) {
         let mx = (b1.x + b2.x) / 2, my = (b1.y + b2.y) / 2
         ctx.saveGState()
         ctx.translateBy(x: mx, y: my)
         ctx.rotate(by: rot)
         ctx.translateBy(x: -mx, y: -my)
-        ctx.setFillColor(Palette.current.coat)
+        ctx.setFillColor(color)
         ctx.move(to: b1)
         ctx.addQuadCurve(to: tip, control: CGPoint(x: lerp(b1.x, tip.x, 0.5) - 2.5, y: lerp(b1.y, tip.y, 0.5) + 1))
         ctx.addQuadCurve(to: b2, control: CGPoint(x: lerp(b2.x, tip.x, 0.5) + 1.5, y: lerp(b2.y, tip.y, 0.5) + 2))
@@ -321,11 +486,11 @@ extension CatSim {
         ctx.scaleBy(x: turnScale(hf, 0.6) * scale, y: sy * scale)
         ctx.rotate(by: a)
         // ears rotate outward/back when flattened
-        ear(ctx, CGPoint(x: -22, y: 8), CGPoint(x: -7, y: 18), CGPoint(x: -18, y: 34), earL.x * 0.9)
-        ear(ctx, CGPoint(x: 6, y: 18), CGPoint(x: 21, y: 9), CGPoint(x: 19, y: 34), -earR.x * 0.9)
-        ctx.setFillColor(Palette.current.coat)
-        headPath(ctx, 25, 21)
-        ctx.fillPath()
+        let pal = Palette.current
+        ear(ctx, CGPoint(x: -22, y: 8), CGPoint(x: -7, y: 18), CGPoint(x: -18, y: 34), earL.x * 0.9, pal.ears)
+        ear(ctx, CGPoint(x: 6, y: 18), CGPoint(x: 21, y: 9), CGPoint(x: 19, y: 34), -earR.x * 0.9,
+            pal.pattern == .calico ? pal.patchB : pal.ears)
+        paintHead(ctx, frontOn: false)
         // gaze in head space (undo the head's own flip and tilt)
         let flip: CGFloat = hf >= 0 ? 1 : -1
         let gzx = gx.x * flip, gzy = gy.x

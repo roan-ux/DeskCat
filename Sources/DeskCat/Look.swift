@@ -67,9 +67,33 @@ enum Personality: String, CaseIterable {
     }
 }
 
+/// The coat's markings. The coat colour is the main colour; each pattern adds to it.
+enum CoatPattern: String, CaseIterable {
+    case solid, tabby, tuxedo, calico, colorpoint
+    var title: String {
+        switch self {
+        case .solid: return "Solid"
+        case .tabby: return "Tabby"
+        case .tuxedo: return "Tuxedo"
+        case .calico: return "Calico"
+        case .colorpoint: return "Siamese"
+        }
+    }
+    var help: String {
+        switch self {
+        case .solid: return "One colour all over"
+        case .tabby: return "Darker stripes, rings on the tail and an M on the forehead"
+        case .tuxedo: return "White chest, muzzle and paws"
+        case .calico: return "White with patches of the coat colour and a second colour"
+        case .colorpoint: return "Pale body; face, ears, legs and tail in the coat colour"
+        }
+    }
+}
+
 /// Everything you can customise about how the cat looks and acts. Saved in UserDefaults.
 struct Look: Equatable {
     var coat: RGB
+    var pattern: CoatPattern
     var eyes: RGB
     var box: RGB
     var size: CatSize
@@ -96,7 +120,7 @@ struct Look: Equatable {
         Swatch(name: "Sky", color: RGB(0.62, 0.79, 0.95)),
     ]
 
-    static let standard = Look(coat: coats[0].color, eyes: eyeColors[0].color, box: boxColors[0].color,
+    static let standard = Look(coat: coats[0].color, pattern: .solid, eyes: eyeColors[0].color, box: boxColors[0].color,
                                size: .medium, personality: .normal)
 
     /// The live look. Setting it saves it and rebuilds the drawing colours.
@@ -111,6 +135,7 @@ struct Look: Equatable {
         let d = UserDefaults.standard
         var look = standard
         if let v = d.string(forKey: "coat").flatMap(RGB.init(hex:)) { look.coat = v }
+        if let v = d.string(forKey: "pattern").flatMap(CoatPattern.init(rawValue:)) { look.pattern = v }
         if let v = d.string(forKey: "eyes").flatMap(RGB.init(hex:)) { look.eyes = v }
         if let v = d.string(forKey: "boxColor").flatMap(RGB.init(hex:)) { look.box = v }
         if let v = d.string(forKey: "size").flatMap(CatSize.init(rawValue:)) { look.size = v }
@@ -121,6 +146,7 @@ struct Look: Equatable {
     func save() {
         let d = UserDefaults.standard
         d.set(coat.hex, forKey: "coat")
+        d.set(pattern.rawValue, forKey: "pattern")
         d.set(eyes.hex, forKey: "eyes")
         d.set(box.hex, forKey: "boxColor")
         d.set(size.rawValue, forKey: "size")
@@ -133,13 +159,26 @@ struct Palette {
     static var current = Palette(Look.current)
 
     // cat
-    let coat: CGColor
+    let pattern: CoatPattern
+    let coat: CGColor           // the main colour: what the body is filled with
     let coatFar: CGColor        // far-side legs, a touch off the coat for depth
     let pawRim: CGColor         // rim around a paw held in front of the face
-    let detail: CGColor         // toe lines, closed and happy eyes
+    let detail: CGColor         // closed and happy eyes (reads on the face colour)
     let sclera: CGColor
-    let eyeRing: CGColor?       // outline so pale eyes still read on a pale coat
+    let eyeRing: CGColor?       // outline so pale eyes still read on a pale face
     let pupil: CGColor
+    // Markings. Which ones are used depends on the pattern (see CatDrawing).
+    let head: CGColor           // the head's base colour
+    let ears: CGColor
+    let neck: CGColor
+    let tail: CGColor
+    let leg: CGColor, legFar: CGColor
+    let paw: CGColor, pawFar: CGColor
+    let toe: CGColor            // toe lines on a paw over the box rim
+    let stripe: CGColor         // tabby stripes
+    let white: CGColor          // tuxedo bib, muzzle and socks
+    let patchA: CGColor, patchB: CGColor   // calico patches
+    let point: CGColor          // colourpoint face mask
     let mouth = RGB(1, 0.561, 0.639).cg()
     let heart = RGB(1, 0.42, 0.545).cg()
     let star = RGB(1, 0.82, 0.25).cg()
@@ -155,16 +194,51 @@ struct Palette {
     let boxCrease: CGColor
     let boxText: NSColor
 
+    static let furWhite = RGB(0.97, 0.96, 0.94)
+    static let ginger = RGB(0.88, 0.54, 0.24)
+
+    /// A far-side version of a colour: a touch off it, for depth.
+    static func far(_ c: RGB) -> RGB { c.luminance > 0.55 ? c.mix(.black, 0.1) : c.mix(.white, 0.07) }
+
     init(_ look: Look) {
-        let c = look.coat
-        let light = c.luminance > 0.55
-        coat = c.cg()
-        coatFar = (light ? c.mix(.black, 0.1) : c.mix(.white, 0.07)).cg()
-        pawRim = (light ? c.mix(.black, 0.3) : c.mix(.white, 0.22)).cg()
-        detail = light ? RGB.ink.cg(0.85) : RGB.white.cg()
+        let c = look.coat, light = c.luminance > 0.55
+        pattern = look.pattern
+        let white = Self.furWhite
+        // The body colour and the colour around the eyes (for the eye ring and closed-eye lines).
+        var body = c, face = c, legs = c, paws = c, tailC = c, earC = c, neckC = c
+        var pa = c, pb = c
+        switch look.pattern {
+        case .solid, .tabby:
+            break
+        case .tuxedo:
+            paws = white
+        case .calico:
+            if c.luminance > 0.7 { pa = Self.ginger; pb = .ink }
+            else if c.r - c.b > 0.25 { pa = c; pb = .ink }
+            else { pa = c; pb = Self.ginger }
+            body = white; face = white; legs = white; paws = white; neckC = white; tailC = pa; earC = pa
+        case .colorpoint:
+            body = c.mix(white, light ? 0.55 : 0.8)     // pale body, darker points
+            neckC = body
+        }
+        coat = body.cg()
+        coatFar = Self.far(body).cg()
+        pawRim = (body.luminance > 0.55 ? body.mix(.black, 0.3) : body.mix(.white, 0.22)).cg()
+        detail = face.luminance > 0.55 ? RGB.ink.cg(0.85) : RGB.white.cg()
         sclera = look.eyes.cg()
-        eyeRing = abs(look.eyes.luminance - c.luminance) < 0.35 ? RGB.ink.cg(0.8) : nil
+        eyeRing = abs(look.eyes.luminance - face.luminance) < 0.35 ? RGB.ink.cg(0.8) : nil
         pupil = RGB(0.07, 0.07, 0.08).cg()
+        head = (look.pattern == .colorpoint ? body : face).cg()
+        ears = earC.cg()
+        neck = neckC.cg()
+        tail = tailC.cg()
+        leg = legs.cg(); legFar = Self.far(legs).cg()
+        paw = paws.cg(); pawFar = Self.far(paws).cg()
+        toe = paws.luminance > 0.55 ? RGB.ink.cg(0.85) : RGB.white.cg()
+        stripe = (light ? c.mix(.black, 0.32) : c.mix(.black, 0.45).mix(.white, c.luminance < 0.15 ? 0.12 : 0)).cg()
+        self.white = white.cg()
+        patchA = pa.cg(); patchB = pb.cg()
+        point = c.cg()
 
         let b = look.box
         boxTop = b.mix(.white, 0.1).cg()

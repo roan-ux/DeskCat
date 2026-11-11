@@ -52,6 +52,7 @@ Menu bar cat → **Settings…** (⌘,). Everything applies live and is remember
 
 - **Name** on the box
 - **Coat** and **Eyes** colour: presets, or any colour from the colour well
+- **Pattern**: solid, tabby (stripes, ringed tail, an M on the forehead), tuxedo (white bib, muzzle and socks), calico (white with patches of the coat colour and a second colour), Siamese (pale body, coat-coloured face, ears, legs and tail)
 - **Size**: small, medium, large
 - **Personality**: calm (plays less, stays in the box longer), normal, playful
 - **Box colour**: presets or any colour; the cardboard shading follows it

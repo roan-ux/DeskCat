@@ -57,7 +57,12 @@ private struct SettingsView: View {
         Form {
             Section("Cat") {
                 TextField("Name on the box", text: $m.name, prompt: Text("e.g. Mochi"))
+                Picker("Pattern", selection: $m.look.pattern) {
+                    ForEach(CoatPattern.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
                 LabeledContent("Coat") { SwatchRow(swatches: Look.coats, selection: $m.look.coat) }
+                Text(m.look.pattern.help).font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Eyes") { SwatchRow(swatches: Look.eyeColors, selection: $m.look.eyes) }
                 Picker("Size", selection: $m.look.size) {
                     ForEach(CatSize.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -115,7 +120,7 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         // A grouped Form scrolls, so it has no height of its own; without one the window collapses to its title bar.
-        .frame(width: 440, height: 760)
+        .frame(width: 460, height: 780)
         .onChange(of: m.look) { newValue in
             Look.current = newValue
             onLookChange()
