@@ -112,6 +112,12 @@ enum StickerArt {
         defer { drawsGroundShadows = true }
         ctx.scaleBy(x: r, y: r)
         ctx.translateBy(x: -region.minX, y: -region.minY)     // world (screen) coordinates from here
+        // Only what you can see: the cat sits on the bottom edge (or the Dock), and its feet and
+        // tail tip reach a little past it, off screen or behind the Dock. Leave those out.
+        let visible = NSScreen.screens.map { s in
+            CGRect(x: s.frame.minX, y: s.visibleFrame.minY, width: s.frame.width, height: s.frame.maxY - s.visibleFrame.minY)
+        }
+        if !visible.isEmpty { ctx.clip(to: visible) }
 
         if showBox {
             let box = BoxView(frame: NSRect(origin: .zero, size: boxFrame.size))
@@ -178,7 +184,7 @@ enum StickerArt {
 
     /// A thick white die-cut border and a soft shadow, like a real sticker.
     private static func addBorder(_ image: CGImage) -> CGImage? {
-        let border = 7 * resolution, pad = border + 6 * resolution
+        let border = 3.5 * resolution, pad = border + 4 * resolution
         let w = image.width + Int(pad * 2), h = image.height + Int(pad * 2)
         let rect = CGRect(x: pad, y: pad, width: CGFloat(image.width), height: CGFloat(image.height))
 
@@ -194,7 +200,7 @@ enum StickerArt {
         // Stamp the silhouette in a ring to grow it into the border.
         guard let bctx = bitmap(w, h) else { return nil }
         let steps = 32
-        for ring in [border * 0.5, border] {
+        for ring in [border * 0.33, border * 0.66, border] {
             for i in 0..<steps {
                 let a = CGFloat(i) / CGFloat(steps) * 2 * .pi
                 bctx.draw(silhouette, in: rect.offsetBy(dx: cos(a) * ring, dy: sin(a) * ring))
@@ -205,8 +211,8 @@ enum StickerArt {
 
         guard let out = bitmap(w, h) else { return nil }
         out.saveGState()
-        out.setShadow(offset: CGSize(width: 0, height: -1.5 * resolution), blur: 4 * resolution,
-                      color: CGColor(gray: 0, alpha: 0.28))
+        out.setShadow(offset: CGSize(width: 0, height: -1 * resolution), blur: 2.5 * resolution,
+                      color: CGColor(gray: 0, alpha: 0.22))
         out.draw(outline, in: CGRect(x: 0, y: 0, width: w, height: h))
         out.restoreGState()
         out.draw(image, in: rect)
