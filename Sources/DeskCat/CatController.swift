@@ -42,6 +42,9 @@ final class CatController: NSObject {
     private var dragOrigin = CGPoint.zero
     private var pressPoint = CGPoint.zero
     private var catDragging = false
+    /// The activity the sticker book last got a sticker for, so each visit to it is snapped once.
+    private var stickerAct: Act?
+    private var stickerLastT: CGFloat = 0
 
     override init() {
         let scale = Look.current.size.scale
@@ -164,6 +167,28 @@ final class CatController: NSObject {
         sim.step(dt, pointer: NSEvent.mouseLocation)
         syncWindows()
         playSounds()
+        collectSticker()
+    }
+
+    // MARK: Stickers
+
+    /// Fills the sticker book: a little way into each activity, when the pose has settled.
+    private func collectSticker() {
+        if sim.t < stickerLastT { stickerAct = nil }      // a new activity (or the same one again) has started
+        stickerLastT = sim.t
+        if sim.act != stickerAct, let moment = sim.act.stickerMoment, sim.t >= moment {
+            stickerAct = sim.act
+            if let png = StickerArt.render(sim: sim, name: name) { StickerBook.shared.save(png, act: sim.act) }
+        }
+    }
+
+    /// Copies a sticker of what the cat is doing right now, and keeps it in the book.
+    func copyStickerNow() {
+        guard let png = StickerArt.render(sim: sim, name: name) else { return }
+        StickerBook.shared.save(png, act: sim.act)
+        let file = StickerBook.shared.stickers.first { $0.id == sim.act.key }?.url
+        StickerBook.copy(png: png, file: file)
+        stickerAct = sim.act
     }
 
     /// Plays what the cat said this frame, panned to where it is on its screen.

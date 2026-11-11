@@ -59,6 +59,10 @@ Menu bar cat → **Settings…** (⌘,). Everything applies live and is remember
 
 To add another option: add a field to `Look` in `Look.swift` (with its save/load key), derive any colours in `Palette`, add a control to `SettingsWindow.swift`, and read it where it's drawn or simulated.
 
+## Stickers
+
+DeskCat keeps a sticker book of your cat: a little way into each thing it does (sitting, grooming, asleep, dizzy, zoomies…) it snaps a sticker of it, in your cat's colours, with a white die-cut border. Settings → **Stickers** shows one per activity; click one to copy it and paste it into any chat, or drag it out. Menu bar → **Copy a sticker of …** copies whatever it's doing right now. They're saved as PNGs in `~/Library/Application Support/DeskCat/Stickers`.
+
 ## Code map
 
 | File | Role |
@@ -72,6 +76,7 @@ To add another option: add a field to `Look` in `Look.swift` (with its save/load
 | `PetWindow.swift` | Transparent, always-on-top, non-activating panel |
 | `Look.swift` | Customisable look and personality, and the colours derived from it |
 | `SettingsWindow.swift` | The Settings window |
+| `Stickers.swift` | Sticker book: renders the cat to a bordered PNG, copies it |
 | `Settings.swift` | Name, box position, roaming toggle |
 
 ## Lightweight

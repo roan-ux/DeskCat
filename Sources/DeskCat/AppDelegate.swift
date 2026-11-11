@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.cat = cat
         settings.onLookChange = { [weak cat] in cat?.applyLook() }
         settings.onRename = { [weak cat] name in cat?.name = name }
+        settings.onSnapSticker = { [weak cat] in cat?.copyStickerNow() }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let image = NSImage(systemSymbolName: "cat.fill", accessibilityDescription: "DeskCat") {
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: cat.name, action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
         add(to: menu, cat.isHome ? "Let \(cat.name) out" : "Call \(cat.name) back to the box", #selector(toggleOut))
+        add(to: menu, "Copy a sticker of \(cat.name)", #selector(copySticker))
         add(to: menu, "Settings…", #selector(openSettings), key: ",")
         add(to: menu, "Rename…", #selector(rename))
         add(to: menu, "Wander on its own", #selector(toggleRoam)).state = Settings.roamsOnItsOwn ? .on : .off
@@ -84,6 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleOut() {
         guard let cat else { return }
         if cat.isHome { cat.letOut() } else { cat.callHome() }
+    }
+
+    @objc private func copySticker() {
+        cat?.copyStickerNow()
     }
 
     @objc private func openSettings() {

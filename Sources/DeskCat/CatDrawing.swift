@@ -1,8 +1,11 @@
 import AppKit
 
+/// Off while drawing a sticker: a sticker has its own shadow, and floor shadows would get a border.
+nonisolated(unsafe) var drawsGroundShadows = true
+
 /// Soft contact shadow: a few stacked translucent ellipses, a cheap blur.
 func drawGroundShadow(_ ctx: CGContext, center: CGPoint, rx: CGFloat, ry: CGFloat, alpha: CGFloat) {
-    guard alpha > 0.005 else { return }
+    guard alpha > 0.005, drawsGroundShadows else { return }
     ctx.saveGState()
     ctx.setFillColor(Palette.current.shadow)
     ctx.setAlpha(alpha * 0.32)

@@ -7,13 +7,15 @@ import SwiftUI
 final class SettingsWindowController {
     var onLookChange: (() -> Void)?
     var onRename: ((String) -> Void)?
+    var onSnapSticker: (() -> Void)?
     private var window: NSWindow?
 
     func show() {
         if window == nil {
             let view = SettingsView(
                 onLookChange: { [weak self] in self?.onLookChange?() },
-                onRename: { [weak self] name in self?.onRename?(name) })
+                onRename: { [weak self] name in self?.onRename?(name) },
+                onSnapSticker: { [weak self] in self?.onSnapSticker?() })
             let w = NSWindow(contentViewController: NSHostingController(rootView: view))
             w.title = "DeskCat Settings"
             w.styleMask = [.titled, .closable]
@@ -39,13 +41,17 @@ private final class SettingsModel: ObservableObject {
     @Published var volume = Settings.soundVolume
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
     @Published var loginNote: String?
+    /// The sticker just copied, to say so for a moment.
+    @Published var copied: String?
 }
 
 private struct SettingsView: View {
     let onLookChange: () -> Void
     let onRename: (String) -> Void
+    let onSnapSticker: () -> Void
 
     @StateObject private var m = SettingsModel()
+    @ObservedObject private var book = StickerBook.shared
 
     var body: some View {
         Form {
@@ -72,6 +78,18 @@ private struct SettingsView: View {
             Section("Box") {
                 LabeledContent("Colour") { SwatchRow(swatches: Look.boxColors, selection: $m.look.box) }
             }
+            Section("Stickers") {
+                stickerGrid
+                HStack {
+                    Button("Copy what \(catName) is doing now") { onSnapSticker(); flash("now") }
+                    if m.copied == "now" { Text("Copied").foregroundStyle(.secondary) }
+                    Spacer()
+                    Button("Show in Finder") {
+                        try? FileManager.default.createDirectory(at: book.folder, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(book.folder)
+                    }
+                }
+            }
             Section("Behaviour") {
                 Toggle("Wander out of the box on its own", isOn: $m.roams)
                 Toggle("Open at login", isOn: $m.openAtLogin)
@@ -97,7 +115,7 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         // A grouped Form scrolls, so it has no height of its own; without one the window collapses to its title bar.
-        .frame(width: 440, height: 740)
+        .frame(width: 440, height: 760)
         .onChange(of: m.look) { newValue in
             Look.current = newValue
             onLookChange()
@@ -111,6 +129,46 @@ private struct SettingsView: View {
         .onChange(of: m.toy) { Settings.toy = ToyKind(rawValue: $0) }
         .onChange(of: m.volume) { Settings.soundVolume = $0 }
         .onChange(of: m.openAtLogin) { setOpenAtLogin($0) }
+    }
+
+    private var catName: String {
+        let n = m.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return n.isEmpty ? "your cat" : n
+    }
+
+    /// One sticker per thing the cat has done. Click to copy, or drag one into a chat.
+    @ViewBuilder private var stickerGrid: some View {
+        if book.stickers.isEmpty {
+            Text("Stickers of \(catName) appear here as it sits, sleeps, grooms and plays.")
+                .font(.caption).foregroundStyle(.secondary)
+        } else {
+            Text("One for each thing \(catName) has done. Click to copy, then paste into any chat, or drag one out.")
+                .font(.caption).foregroundStyle(.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 10) {
+                ForEach(book.stickers) { sticker in
+                    Button { book.copy(sticker); flash(sticker.id) } label: {
+                        VStack(spacing: 3) {
+                            Image(nsImage: sticker.image)
+                                .resizable().interpolation(.high).scaledToFit()
+                                .frame(width: 76, height: 70)
+                            Text(m.copied == sticker.id ? "Copied" : sticker.title)
+                                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy “\(sticker.title)”")
+                    .onDrag { NSItemProvider(contentsOf: sticker.url) ?? NSItemProvider() }
+                }
+            }
+        }
+    }
+
+    private func flash(_ id: String) {
+        let m = m
+        m.copied = id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { if m.copied == id { m.copied = nil } }
     }
 
     private func setOpenAtLogin(_ on: Bool) {
